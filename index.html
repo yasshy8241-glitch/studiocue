@@ -1,0 +1,2523 @@
+<!DOCTYPE html>
+<html lang="ja" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>StudioCue - YouTube撮影用プロンプター</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        body {
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+            background-color: #060911;
+            color: #f8fafc;
+            overflow: hidden;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* カスタムスクロールバー */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.6);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+
+        /* =====================================================
+           チカチカしない滑らかな自動再生ハイライト（同一描画エンジン＋ソフトエッジワイプ）
+           ===================================================== */
+        .script-char {
+            display: inline;
+            /* 常時 background-clip: text に統一することで、状態変化時のフォント再ラスタライズ（チカチカ）を完全に防止 */
+            --wipe-pct: 0%;
+            background-image: linear-gradient(
+                90deg,
+                #fde047 0%,
+                #fde047 var(--wipe-pct),
+                #f8fafc calc(var(--wipe-pct) + 0.1%),
+                #f8fafc 100%
+            );
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            -webkit-text-fill-color: transparent;
+            will-change: background-image;
+        }
+        /* すでに読み終えた文字 */
+        .char-passed {
+            --wipe-pct: 100%;
+            background-image: linear-gradient(90deg, #fde047 0%, #fde047 100%);
+        }
+        /* 今まさに読んでいる文字（境界に18%のソフトグラデーションを持たせて滑らかに染め上げる） */
+        .char-current {
+            background-image: linear-gradient(
+                90deg,
+                #fde047 0%,
+                #fde047 calc(var(--wipe-pct) - 8%),
+                #fef08a var(--wipe-pct),
+                #f8fafc calc(var(--wipe-pct) + 10%),
+                #f8fafc 100%
+            );
+        }
+        /* これから読む文字（アクティブ行） */
+        .char-upcoming-active {
+            --wipe-pct: 0%;
+            background-image: linear-gradient(90deg, #f8fafc 0%, #f8fafc 100%);
+        }
+        /* まだ順番が来ていない行の文字 */
+        .char-upcoming-inactive {
+            --wipe-pct: 0%;
+            background-image: linear-gradient(90deg, #cbd5e1 0%, #cbd5e1 100%);
+        }
+
+        /* カード下部のスムーズ進行プログレスバー */
+        .line-progress-bar {
+            transition: none;
+            will-change: width;
+        }
+
+        /* 記録時の画面エッジフラッシュ */
+        .flash-ng {
+            box-shadow: inset 0 0 60px rgba(244, 63, 94, 0.65);
+        }
+        .flash-good {
+            box-shadow: inset 0 0 60px rgba(234, 179, 8, 0.65);
+        }
+
+        /* 左右反転（ハーフミラープロンプター機材用） */
+        .mirror-mode {
+            transform: scaleX(-1);
+        }
+
+        /* デバイスシミュレーター枠（手動プレビュー時） */
+        .sim-viewport-wrapper {
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col bg-[#060911] text-slate-100 overflow-hidden">
+
+    <!-- =====================================================
+         トップヘッダー（タブ切替・デバイス比率自動判別バッジ・録画タイマー）
+         ===================================================== -->
+    <header class="bg-slate-900/95 backdrop-blur-md border-b border-slate-800/80 px-3 sm:px-5 py-2 flex items-center justify-between gap-2 z-40 shrink-0">
+        
+        <!-- 左：ロゴ ＆ デバイス比率自動判別インジケーター -->
+        <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-rose-500 flex items-center justify-center shadow-md shadow-indigo-500/20 shrink-0">
+                <i class="fa-solid fa-clapperboard text-white text-sm"></i>
+            </div>
+            <div class="hidden sm:block">
+                <div class="font-extrabold text-sm tracking-tight leading-none flex items-center gap-1.5">
+                    <span>StudioCue</span>
+                </div>
+                <span class="text-[10px] text-slate-400">YouTubeカンペ</span>
+            </div>
+
+            <!-- 画面比率の自動判別＆切替ドロップダウン -->
+            <div class="relative">
+                <button onclick="toggleDropdownPanel('device-popover')" id="device-mode-badge"
+                    class="px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-[11px] font-bold text-indigo-300 flex items-center gap-1.5 transition"
+                    title="画面比率の自動最適化モード（クリックでプレビュー切替）">
+                    <i id="device-mode-icon" class="fa-solid fa-display"></i>
+                    <span id="device-mode-label">自動判別中...</span>
+                    <i class="fa-solid fa-chevron-down text-[9px] text-slate-400"></i>
+                </button>
+
+                <!-- デバイス比率切替ポップオーバー -->
+                <div id="device-popover" class="hidden absolute left-0 mt-2 w-64 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-2 z-50 text-xs">
+                    <div class="px-2.5 py-1.5 text-[11px] font-bold text-slate-400 border-b border-slate-800 flex items-center justify-between">
+                        <span>画面比率・デバイス最適化</span>
+                        <span id="current-aspect-text" class="font-mono text-[10px] text-indigo-400"></span>
+                    </div>
+                    <div class="space-y-1 mt-1.5">
+                        <button onclick="setDeviceMode('AUTO')" class="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 flex items-center justify-between font-bold text-white" id="dev-btn-AUTO">
+                            <span>✨ 端末に合わせて自動判別</span>
+                            <span class="text-[10px] bg-indigo-600 px-1.5 py-0.5 rounded">推奨</span>
+                        </button>
+                        <button onclick="setDeviceMode('PHONE_PORTRAIT')" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-800 flex items-center justify-between text-slate-300" id="dev-btn-PHONE_PORTRAIT">
+                            <span>📱 通常スマホ (縦 9:16〜20)</span>
+                            <span class="text-[10px] text-slate-500">片手操作</span>
+                        </button>
+                        <button onclick="setDeviceMode('FOLDABLE_PASSPORT')" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-800 flex items-center justify-between text-slate-300" id="dev-btn-FOLDABLE_PASSPORT">
+                            <span>📖 折りたたみ / パスポート (約1:1〜4:3)</span>
+                            <span class="text-[10px] text-slate-500">両親指タップ</span>
+                        </button>
+                        <button onclick="setDeviceMode('TABLET')" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-800 flex items-center justify-between text-slate-300" id="dev-btn-TABLET">
+                            <span>📟 タブレット (4:3 / 16:10)</span>
+                            <span class="text-[10px] text-slate-500">中距離カンペ</span>
+                        </button>
+                        <button onclick="setDeviceMode('PC_STANDARD')" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-800 flex items-center justify-between text-slate-300" id="dev-btn-PC_STANDARD">
+                            <span>💻 通常PCモニター (16:9)</span>
+                            <span class="text-[10px] text-slate-500">標準ワイド</span>
+                        </button>
+                        <button onclick="setDeviceMode('ULTRAWIDE')" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-slate-800 flex items-center justify-between text-slate-300" id="dev-btn-ULTRAWIDE">
+                            <span>🖥️ ウルトラワイド (21:9 / 32:9)</span>
+                            <span class="text-[10px] text-slate-500">3カラム目線固定</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 中央：メイン画面切り替えタブ -->
+        <nav class="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+            <button onclick="switchTab('prompter')" id="tab-btn-prompter"
+                class="px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 bg-indigo-600 text-white shadow">
+                <i class="fa-solid fa-tv"></i>
+                <span>カンペ撮影</span>
+            </button>
+            <button onclick="switchTab('editor')" id="tab-btn-editor"
+                class="px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 text-slate-400 hover:text-white">
+                <i class="fa-solid fa-file-import"></i>
+                <span>台本・外部取込</span>
+            </button>
+            <button onclick="switchTab('checklist')" id="tab-btn-checklist"
+                class="px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 text-slate-400 hover:text-white relative">
+                <i class="fa-solid fa-scissors"></i>
+                <span class="hidden md:inline">編集メモ・NG記録</span>
+                <span class="md:hidden">編集メモ</span>
+                <span id="badge-mark-count" class="bg-rose-500 text-white text-[10px] px-1.5 py-0.2 rounded-full hidden">0</span>
+            </button>
+        </nav>
+
+        <!-- 右：撮影経過タイマー ＆ ショートカットヘルプ -->
+        <div class="flex items-center gap-1.5 sm:gap-2">
+            <div class="flex items-center bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1 gap-2">
+                <span id="rec-dot" class="w-2 h-2 rounded-full bg-slate-600"></span>
+                <span id="timer-display" class="font-mono font-bold text-xs sm:text-sm tracking-wider text-slate-200">00:00</span>
+                <button onclick="toggleRecordingTimer()" id="btn-rec-toggle"
+                    class="px-2 py-0.5 rounded-md bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold transition">
+                    撮影開始
+                </button>
+                <button onclick="resetRecordingTimer()" class="text-slate-500 hover:text-slate-200 text-xs" title="タイマーリセット">
+                    <i class="fa-solid fa-rotate-right"></i>
+                </button>
+            </div>
+
+            <button onclick="toggleModal('shortcut-modal')"
+                class="p-2 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium flex items-center gap-1.5 border border-slate-700 transition"
+                title="リモコン・キーボード操作一覧">
+                <i class="fa-regular fa-keyboard text-indigo-400"></i>
+                <span class="hidden xl:inline">リモコン操作</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- =====================================================
+         メインビューポート領域（デバイス比率に応じて自動最適化）
+         ===================================================== -->
+    <main id="main-viewport-container" class="flex-1 overflow-hidden relative flex flex-col">
+
+        <!-- =====================================================
+             VIEW 1: カンペ撮影画面 (Prompter)
+             ===================================================== -->
+        <section id="view-prompter" class="flex-1 flex flex-col overflow-hidden relative">
+
+            <!-- サブツールバー：自分の担当強調（1〜4人） ＆ クイック設定 -->
+            <div class="bg-slate-900/75 border-b border-slate-800/80 px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 z-20 shrink-0">
+                
+                <!-- 自分の担当（セリフ拡大フォーカス）ワンタップ切替 -->
+                <div class="flex items-center gap-1.5 overflow-x-auto max-w-full py-0.5">
+                    <span class="text-[11px] font-bold text-slate-400 shrink-0 flex items-center gap-1 mr-1">
+                        <i class="fa-solid fa-user-check text-indigo-400"></i> 自分の表示:
+                    </span>
+                    <div id="focus-speaker-buttons" class="flex items-center gap-1.5 shrink-0">
+                        <!-- JSで「全員均等」「A」「B」「C」「D」を描画 -->
+                    </div>
+                </div>
+
+                <!-- 右側：文字サイズ・反転・1ページ行数・話すペースのポップオーバーボタン -->
+                <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap ml-auto">
+                    
+                    <!-- 1ページの行数設定ボタン（1〜20行 / 全行） -->
+                    <div class="relative">
+                        <button onclick="toggleDropdownPanel('lines-popover')"
+                            class="px-2.5 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-bold flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-table-list text-emerald-400"></i>
+                            <span>1ページ: <strong id="lines-per-page-badge" class="text-emerald-400">6行</strong></span>
+                            <i class="fa-solid fa-chevron-down text-[9px] text-slate-500"></i>
+                        </button>
+
+                        <!-- 行数変更ポップオーバー -->
+                        <div id="lines-popover" class="hidden absolute right-0 mt-2 w-72 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-4 z-50 space-y-3">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-bold text-white">1ページに表示する行数</span>
+                                <span id="lines-popover-val" class="text-xs font-extrabold text-emerald-400">6行</span>
+                            </div>
+                            <p class="text-[11px] text-slate-400 leading-relaxed">
+                                画面サイズや見やすさに合わせて1〜20行、または全行一括表示を選べます。
+                            </p>
+                            <!-- クイック選択ボタン -->
+                            <div class="grid grid-cols-4 gap-1.5">
+                                <button onclick="setLinesPerPage(3)" class="lines-preset-btn py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold">3行</button>
+                                <button onclick="setLinesPerPage(5)" class="lines-preset-btn py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold">5行</button>
+                                <button onclick="setLinesPerPage(6)" class="lines-preset-btn py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold">6行</button>
+                                <button onclick="setLinesPerPage(8)" class="lines-preset-btn py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold">8行</button>
+                                <button onclick="setLinesPerPage(10)" class="lines-preset-btn py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold">10行</button>
+                                <button onclick="setLinesPerPage(12)" class="lines-preset-btn py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold">12行</button>
+                                <button onclick="setLinesPerPage(16)" class="lines-preset-btn py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold">16行</button>
+                                <button onclick="setLinesPerPage(999)" class="lines-preset-btn py-1.5 rounded-lg bg-indigo-950 text-indigo-300 border border-indigo-700/50 hover:bg-indigo-900 text-xs font-bold">全行</button>
+                            </div>
+                            <!-- 1行単位の微調整 -->
+                            <div class="flex items-center justify-between pt-2 border-t border-slate-800">
+                                <span class="text-xs text-slate-400">1行ずつ微調整:</span>
+                                <div class="flex items-center gap-2">
+                                    <button onclick="changeLinesPerPage(-1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 font-bold text-sm">-</button>
+                                    <button onclick="changeLinesPerPage(1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 font-bold text-sm">+</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 文字サイズ切替 -->
+                    <div class="flex items-center bg-slate-950 rounded-xl border border-slate-800 p-0.5 text-xs">
+                        <button onclick="changeFontSize(-1)" class="px-2 py-1 rounded-lg hover:bg-slate-800 text-slate-300 font-bold" title="文字を小さく">A-</button>
+                        <span id="font-size-label" class="px-2 font-bold text-amber-400 text-[11px]">標準</span>
+                        <button onclick="changeFontSize(1)" class="px-2 py-1 rounded-lg hover:bg-slate-800 text-slate-300 font-bold" title="文字を大きく">A+</button>
+                    </div>
+
+                    <!-- 左右反転ボタン -->
+                    <button onclick="toggleMirror()" id="mirror-btn"
+                        class="px-2.5 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-400 border border-slate-800 text-xs font-bold transition flex items-center gap-1"
+                        title="ハーフミラー機材用に左右反転">
+                        <i class="fa-solid fa-arrows-left-right"></i>
+                        <span class="hidden md:inline">反転</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- プロンプター本体グリッド（ウルトラワイド時は3カラム、通常時は中央集中＋両端タップゾーン） -->
+            <div id="prompter-body-grid" class="flex-1 overflow-hidden relative flex">
+
+                <!-- [ウルトラワイド専用 左サイドパネル] 全セリフ進行タイムライン＆ページ目次 -->
+                <aside id="ultrawide-left-panel" class="hidden w-80 2xl:w-96 bg-slate-900/75 border-r border-slate-800/90 flex-col p-4 overflow-hidden shrink-0 gap-3">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-2.5 shrink-0">
+                        <div class="text-xs font-extrabold text-slate-200 flex items-center gap-2">
+                            <i class="fa-solid fa-timeline text-indigo-400"></i>
+                            <span>台本進行タイムライン</span>
+                        </div>
+                        <span id="uw-total-duration" class="text-[11px] text-emerald-400 font-mono font-bold bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-800/50"></span>
+                    </div>
+                    <div id="ultrawide-outline-list" class="space-y-1.5 text-xs overflow-y-auto flex-1 pr-1">
+                        <!-- JSで全セリフの進行リストを描画 -->
+                    </div>
+                </aside>
+
+                <!-- [中央メイン] セリフ表示ステージ -->
+                <div id="prompter-stage" class="flex-1 relative flex flex-col overflow-hidden transition-shadow duration-300">
+
+                    <!-- 左右端のワンタップページめくりゾーン（タブレット・折りたたみ・PC等で親指/クリックしやすい） -->
+                    <button onclick="prevPage()" id="edge-tap-prev"
+                        class="absolute left-2 top-4 bottom-4 w-10 sm:w-12 z-10 flex items-center justify-center group opacity-40 hover:opacity-100 focus:opacity-100 transition"
+                        title="前のページへ (← / PageUp)">
+                        <div class="w-9 sm:w-11 h-28 rounded-2xl bg-slate-800/90 border border-slate-700 flex flex-col items-center justify-center text-slate-300 group-hover:bg-indigo-600 group-hover:text-white group-hover:border-indigo-400 transition shadow-xl gap-1">
+                            <i class="fa-solid fa-chevron-left text-base"></i>
+                            <span class="text-[10px] font-bold">前頁</span>
+                        </div>
+                    </button>
+
+                    <button onclick="nextPage()" id="edge-tap-next"
+                        class="absolute right-2 top-4 bottom-4 w-10 sm:w-12 z-10 flex items-center justify-center group opacity-40 hover:opacity-100 focus:opacity-100 transition"
+                        title="次のページへ (→ / PageDown)">
+                        <div class="w-9 sm:w-11 h-28 rounded-2xl bg-slate-800/90 border border-slate-700 flex flex-col items-center justify-center text-slate-300 group-hover:bg-indigo-600 group-hover:text-white group-hover:border-indigo-400 transition shadow-xl gap-1">
+                            <i class="fa-solid fa-chevron-right text-base"></i>
+                            <span class="text-[10px] font-bold">次頁</span>
+                        </div>
+                    </button>
+
+                    <!-- セリフカード・スクロール領域 -->
+                    <div id="prompter-scroll-area" class="flex-1 overflow-y-auto px-12 sm:px-16 py-3 sm:py-4 flex flex-col">
+                        <div id="prompter-lines-container" class="w-full max-w-5xl mx-auto space-y-2.5 my-auto transition-all">
+                            <!-- JSで現在ページのセリフカードを描画 -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- [ウルトラワイド / 折りたたみ横展開時 右サイドパネル] ライブ進行モニター＆リアルタイムNG記録 -->
+                <aside id="ultrawide-right-panel" class="hidden w-80 2xl:w-96 bg-slate-900/75 border-l border-slate-800/90 flex-col p-4 overflow-y-auto shrink-0 space-y-4">
+                    
+                    <!-- 現在の行の残り秒数＆次の話者予告モニター -->
+                    <div class="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 space-y-2.5">
+                        <div class="flex items-center justify-between text-xs">
+                            <span class="font-bold text-slate-400"><i class="fa-solid fa-gauge-high text-indigo-400 mr-1"></i>現在のセリフ進行</span>
+                            <span id="uw-line-timer" class="font-mono font-bold text-amber-400">0.0s / 0.0s</span>
+                        </div>
+                        <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                            <div id="uw-line-progress" class="h-full bg-gradient-to-r from-indigo-500 to-amber-400 w-0"></div>
+                        </div>
+                        <div id="uw-next-speaker-box" class="pt-1 flex items-center justify-between text-xs border-t border-slate-800/80">
+                            <span class="text-slate-400">次のセリフ:</span>
+                            <span id="uw-next-speaker-badge" class="font-bold text-slate-200">-</span>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 space-y-2.5">
+                        <div class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                            <i class="fa-solid fa-bolt text-amber-400"></i> ワンタップ編集マーカー
+                        </div>
+                        <p class="text-[11px] text-slate-400">
+                            噛んだ瞬間や面白いアドリブが出た瞬間に押すと、現在の秒数とセリフを自動記録します。
+                        </p>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button onclick="recordMarker('NG')" class="py-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/50 text-rose-300 font-extrabold text-xs flex flex-col items-center gap-1 transition active:scale-95">
+                                <span class="text-base">❌ NG記録</span>
+                                <span class="text-[10px] opacity-75">ショートカット: N</span>
+                            </button>
+                            <button onclick="recordMarker('GOOD')" class="py-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-300 font-extrabold text-xs flex flex-col items-center gap-1 transition active:scale-95">
+                                <span class="text-base">⭐ 見どころ</span>
+                                <span class="text-[10px] opacity-75">ショートカット: M</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="flex-1 flex flex-col min-h-0">
+                        <div class="text-xs font-bold text-slate-400 mb-2 flex items-center justify-between">
+                            <span>直近のマーカー履歴</span>
+                            <button onclick="switchTab('checklist')" class="text-[11px] text-indigo-400 hover:underline">すべて見る →</button>
+                        </div>
+                        <div id="ultrawide-markers-mini" class="space-y-2 overflow-y-auto flex-1 pr-1">
+                            <!-- JSでミニ履歴を描画 -->
+                        </div>
+                    </div>
+                </aside>
+
+            </div>
+
+            <!-- トースト通知（画面上部に控えめに表示） -->
+            <div id="prompter-toast" class="pointer-events-none fixed top-16 left-1/2 -translate-x-1/2 z-50 opacity-0 transition-all duration-300 transform -translate-y-2">
+                <div id="prompter-toast-inner" class="px-4 py-2 rounded-full font-bold text-xs sm:text-sm shadow-2xl flex items-center gap-2 border"></div>
+            </div>
+
+            <!-- =====================================================
+                 下部コントロールバー（自動再生・わかりやすい話すペース設定・ページ送り・NG記録）
+                 ===================================================== -->
+            <div class="bg-slate-900/95 backdrop-blur-md border-t border-slate-800 px-3 sm:px-6 py-2.5 z-30 shrink-0">
+                <div class="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-2 sm:gap-4">
+
+                    <!-- 左：自動再生ボタン ＆ 分かりやすい「話すペース」設定 -->
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <!-- 自動再生 ON/OFF メインボタン -->
+                        <button onclick="toggleAutoPlay()" id="btn-autoplay"
+                            class="px-4 sm:px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-emerald-600/25 transition flex items-center gap-2">
+                            <i class="fa-solid fa-play" id="icon-autoplay"></i>
+                            <span id="label-autoplay">自動再生 開始</span>
+                        </button>
+
+                        <!-- 話すペース設定ボタン（クリックで直感的なプリセットパネルを展開） -->
+                        <div class="relative">
+                            <button onclick="toggleDropdownPanel('pace-popover')" id="pace-trigger-btn"
+                                class="px-3 py-2 rounded-2xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs flex items-center gap-2 transition">
+                                <span id="pace-preset-badge" class="font-bold text-amber-400">💬 標準ペース</span>
+                                <span class="text-slate-400 hidden sm:inline">|</span>
+                                <span id="pace-sec-summary" class="text-[11px] text-slate-300 hidden sm:inline">秒間5.5文字 (全体: 約0分0秒)</span>
+                                <i class="fa-solid fa-sliders text-slate-400 text-xs"></i>
+                            </button>
+
+                            <!-- 分かりやすい話すペース設定ポップオーバー -->
+                            <div id="pace-popover" class="hidden absolute bottom-full left-0 mb-3 w-80 sm:w-96 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-4 z-50 space-y-3.5">
+                                <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                                    <div>
+                                        <h4 class="font-bold text-sm text-white">話すペース（自動再生スピード）</h4>
+                                        <p class="text-[11px] text-slate-400">句読点（、や。）では自動的に自然な間が空きます</p>
+                                    </div>
+                                    <button onclick="toggleDropdownPanel('pace-popover')" class="text-slate-400 hover:text-white p-1">
+                                        <i class="fa-solid fa-xmark"></i>
+                                    </button>
+                                </div>
+
+                                <!-- 4段階の直感プリセット -->
+                                <div class="grid grid-cols-2 gap-2">
+                                    <button onclick="setPacePreset(260)" id="pace-btn-260" class="pace-preset-btn p-2.5 rounded-xl border border-slate-800 bg-slate-950 hover:border-indigo-500 text-left transition">
+                                        <div class="font-bold text-xs text-white">🐢 ゆっくり丁寧</div>
+                                        <div class="text-[10px] text-slate-400 mt-0.5">解説・朗読向け (秒間4.3文字)</div>
+                                    </button>
+                                    <button onclick="setPacePreset(330)" id="pace-btn-330" class="pace-preset-btn p-2.5 rounded-xl border border-indigo-500 bg-indigo-950/40 text-left transition">
+                                        <div class="font-bold text-xs text-indigo-300">💬 標準トーク</div>
+                                        <div class="text-[10px] text-slate-300 mt-0.5">聞き取りやすい (秒間5.5文字)</div>
+                                    </button>
+                                    <button onclick="setPacePreset(420)" id="pace-btn-420" class="pace-preset-btn p-2.5 rounded-xl border border-slate-800 bg-slate-950 hover:border-indigo-500 text-left transition">
+                                        <div class="font-bold text-xs text-white">⚡ テンポよく</div>
+                                        <div class="text-[10px] text-slate-400 mt-0.5">掛け合い・企画 (秒間7.0文字)</div>
+                                    </button>
+                                    <button onclick="setPacePreset(520)" id="pace-btn-520" class="pace-preset-btn p-2.5 rounded-xl border border-slate-800 bg-slate-950 hover:border-indigo-500 text-left transition">
+                                        <div class="font-bold text-xs text-white">🚀 早口・ショート</div>
+                                        <div class="text-[10px] text-slate-400 mt-0.5">情報凝縮・短尺 (秒間8.7文字)</div>
+                                    </button>
+                                </div>
+
+                                <!-- 細かいスライダー＆想定尺のリアルタイム表示 -->
+                                <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
+                                    <div class="flex items-center justify-between text-xs">
+                                        <span class="text-slate-400">微調整 (<span id="pace-cpm-detail" class="text-white font-bold">330</span>文字/分)</span>
+                                        <span id="pace-total-time-badge" class="font-bold text-emerald-400">台本全体の尺: 約0分0秒</span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <button onclick="adjustPace(-15)" class="w-8 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold">遅く</button>
+                                        <input type="range" id="speed-slider" min="180" max="600" step="10" value="330"
+                                            oninput="updateSpeed(this.value)" class="flex-1 accent-indigo-500 cursor-pointer">
+                                        <button onclick="adjustPace(15)" class="w-8 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold">速く</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 中央：NG / 見どころ 記録ボタン（スマホ・通常PCでもすぐ押せる配置） -->
+                    <div class="flex items-center gap-1.5">
+                        <button onclick="recordMarker('NG')"
+                            class="px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 active:scale-95 border border-rose-500/40 text-rose-300 font-bold text-xs flex items-center gap-1 transition"
+                            title="噛んだ箇所や撮り直しを記録 (Nキー)">
+                            <span>❌ NG</span>
+                        </button>
+                        <button onclick="recordMarker('GOOD')"
+                            class="px-3 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/30 active:scale-95 border border-amber-500/40 text-amber-300 font-bold text-xs flex items-center gap-1 transition"
+                            title="良かったアドリブや見どころを記録 (Mキー)">
+                            <span>⭐ 見どころ</span>
+                        </button>
+                    </div>
+
+                    <!-- 右：直感的な行移動 ＆ ワンタップ画面切り替え（ページ送り）ボタン -->
+                    <div class="flex items-center gap-1.5 sm:gap-2 ml-auto">
+                        <!-- 1行戻る / 1行進む -->
+                        <div class="hidden sm:flex items-center bg-slate-950 rounded-xl border border-slate-800 p-0.5">
+                            <button onclick="stepLine(-1)" class="px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-300 text-xs font-bold" title="1つ前のセリフへ (↑)">
+                                <i class="fa-solid fa-angle-up"></i> 行
+                            </button>
+                            <button onclick="stepLine(1)" class="px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-300 text-xs font-bold" title="1つ次のセリフへ (↓)">
+                                行 <i class="fa-solid fa-angle-down"></i>
+                            </button>
+                        </div>
+
+                        <!-- 前のページへ一気に切り替え -->
+                        <button onclick="prevPage()" id="btn-prev-page"
+                            class="px-3.5 sm:px-4 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-white font-bold text-xs sm:text-sm border border-slate-700 transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-backward-step"></i>
+                            <span class="hidden md:inline">前ページ</span>
+                        </button>
+
+                        <!-- ページ番号インジケーター -->
+                        <div class="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-center min-w-[76px]">
+                            <div class="text-[9px] text-slate-500 uppercase font-bold leading-none">PAGE</div>
+                            <div class="font-mono font-black text-sm sm:text-base leading-tight mt-0.5">
+                                <span id="current-page-num" class="text-indigo-400">1</span>
+                                <span class="text-slate-600">/</span>
+                                <span id="total-page-num" class="text-slate-300">1</span>
+                            </div>
+                        </div>
+
+                        <!-- 次のページへ一気に切り替え -->
+                        <button onclick="nextPage()" id="btn-next-page"
+                            class="px-4 sm:px-6 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-indigo-600/30 transition flex items-center gap-1.5">
+                            <span>次ページへ</span>
+                            <i class="fa-solid fa-forward-step"></i>
+                        </button>
+                    </div>
+
+                </div>
+            </div>
+
+        </section>
+
+        <!-- =====================================================
+             VIEW 2: 台本編集・スプレッドシート等の外部取込画面 (Editor & Import)
+             ===================================================== -->
+        <section id="view-editor" class="flex-1 overflow-y-auto p-4 md:p-6 hidden">
+            <div class="max-w-7xl mx-auto space-y-6 pb-16">
+
+                <!-- 上部：外部インポート（スプレッドシートコピペ / CSV・TXTファイル / URL）カード -->
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                        <div>
+                            <h2 class="text-base font-bold flex items-center gap-2 text-white">
+                                <i class="fa-solid fa-table text-emerald-400"></i>
+                                スプレッドシート / CSV / 外部ファイルから台本を取り込む
+                            </h2>
+                            <p class="text-xs text-slate-400 mt-0.5">
+                                GoogleスプレッドシートやExcelの表をそのままコピー＆ペーストするか、CSV/TXTファイルを読み込めます。
+                            </p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button onclick="downloadTemplateCsv()" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 flex items-center gap-1.5 transition">
+                                <i class="fa-solid fa-file-csv text-emerald-400"></i>
+                                記入用CSVテンプレートをDL
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        <!-- 方法1: スプレッドシート / Excel から直接コピペ -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 flex flex-col justify-between space-y-3">
+                            <div class="space-y-1.5">
+                                <div class="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                                    <span class="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center text-[11px]">1</span>
+                                    スプレッドシート / Excel のセルを貼り付け
+                                </div>
+                                <p class="text-[11px] text-slate-400 leading-relaxed">
+                                    スプレッドシートの<strong>「A列: 話者」「B列: セリフ」「C列: SEやテロップ(任意)」</strong>を選択してコピーし、下に貼り付けてください。
+                                </p>
+                                <textarea id="sheet-paste-input" rows="3"
+                                    class="w-full bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-emerald-500"
+                                    placeholder="ここにスプレッドシートのセルをCtrl+V / ペースト...&#10;例: A [タブ] こんにちは！ [タブ] SE:和太鼓"></textarea>
+                            </div>
+                            <button onclick="importFromSheetPaste()" class="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-paste"></i> 貼り付けた表を台本に変換・反映
+                            </button>
+                        </div>
+
+                        <!-- 方法2: CSV / TSV / TXT ファイルを選択またはドロップ -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 flex flex-col justify-between space-y-3">
+                            <div class="space-y-1.5">
+                                <div class="text-xs font-bold text-sky-400 flex items-center gap-1.5">
+                                    <span class="w-5 h-5 rounded-full bg-sky-500/20 flex items-center justify-center text-[11px]">2</span>
+                                    CSV / TSV / テキストファイルを読み込む
+                                </div>
+                                <p class="text-[11px] text-slate-400 leading-relaxed">
+                                    スプレッドシートから書き出した <code class="text-slate-300">.csv</code> / <code class="text-slate-300">.tsv</code> や、メモ帳の <code class="text-slate-300">.txt</code> 台本ファイルを読み込みます。
+                                </p>
+                                <label class="mt-2 border-2 border-dashed border-slate-700 hover:border-sky-500 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer transition bg-slate-900/40">
+                                    <i class="fa-solid fa-cloud-arrow-up text-2xl text-sky-400 mb-1"></i>
+                                    <span class="text-xs font-bold text-slate-200">クリックしてファイルを選択</span>
+                                    <span class="text-[10px] text-slate-500">.csv, .tsv, .txt 対応 (UTF-8)</span>
+                                    <input type="file" id="file-upload-input" accept=".csv,.tsv,.txt" class="hidden" onchange="handleFileUpload(event)">
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- 方法3: Googleスプレッドシート 共有URLから直接取得 -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 flex flex-col justify-between space-y-3">
+                            <div class="space-y-1.5">
+                                <div class="text-xs font-bold text-purple-400 flex items-center gap-1.5">
+                                    <span class="w-5 h-5 rounded-full bg-purple-500/20 flex items-center justify-center text-[11px]">3</span>
+                                    GoogleスプレッドシートURLから同期取込
+                                </div>
+                                <p class="text-[11px] text-slate-400 leading-relaxed">
+                                    「リンクを知っている全員が閲覧可」または「ウェブに公開(CSV)」したGoogleスプレッドシートのURLを入力すると直接読み込めます。
+                                </p>
+                                <input type="url" id="gsheet-url-input"
+                                    placeholder="https://docs.google.com/spreadsheets/d/..."
+                                    class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-purple-500">
+                            </div>
+                            <button onclick="importFromGoogleSheetUrl()" class="w-full py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs transition flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-cloud-arrow-down"></i> URLから台本を取得
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 下部2カラム：話者設定（最大4人） ＆ 台本テキストエディタ -->
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    
+                    <!-- 左：話者設定（1〜4人）＆ タグ挿入 -->
+                    <div class="lg:col-span-5 space-y-6">
+                        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
+                            <div class="flex items-center justify-between mb-3">
+                                <h3 class="text-sm font-bold flex items-center gap-2">
+                                    <i class="fa-solid fa-users text-indigo-400"></i>
+                                    出演者（話者）の設定 <span class="text-xs font-normal text-slate-400">1〜4人</span>
+                                </h3>
+                                <span class="text-[11px] text-slate-400">名前と色を変更可能</span>
+                            </div>
+                            <div id="speaker-settings-list" class="space-y-2.5">
+                                <!-- JSで描画 -->
+                            </div>
+                        </div>
+
+                        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-3">
+                            <h3 class="text-sm font-bold flex items-center gap-2">
+                                <i class="fa-solid fa-wand-magic-sparkles text-amber-400"></i>
+                                ワンクリック挿入 ＆ サンプル台本
+                            </h3>
+                            <div class="space-y-2">
+                                <div class="text-xs text-slate-400">カーソル位置に話者・演出タグを挿入:</div>
+                                <div class="flex flex-wrap gap-1.5" id="quick-speaker-buttons"></div>
+                                <div class="flex flex-wrap gap-1.5 pt-1">
+                                    <button onclick="insertTag(' (SE: 効果音)')" class="px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs hover:bg-amber-500/20">+ (SE: 効果音)</button>
+                                    <button onclick="insertTag(' [テロップ: 強調テキスト]')" class="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs hover:bg-emerald-500/20">+ [テロップ: 強調]</button>
+                                    <button onclick="insertTag(' [画像: 資料表示]')" class="px-2.5 py-1 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky-300 text-xs hover:bg-sky-500/20">+ [画像: 資料]</button>
+                                    <button onclick="insertTag('\n--- 改ページ ---\n')" class="px-2.5 py-1 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs hover:bg-rose-500/20" title="任意の場所で強制的にページを分けたい時だけ使います">+ 任意改ページ</button>
+                                </div>
+                            </div>
+
+                            <div class="pt-3 border-t border-slate-800 flex items-center justify-between flex-wrap gap-2">
+                                <span class="text-xs text-slate-400">サンプル台本読込:</span>
+                                <div class="flex gap-1.5">
+                                    <button onclick="loadSampleScript('solo')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700">1人解説</button>
+                                    <button onclick="loadSampleScript('duo')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700">2人掛け合い</button>
+                                    <button onclick="loadSampleScript('quartet')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700">4人企画トーク</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 右：台本テキストエディタ -->
+                    <div class="lg:col-span-7 flex flex-col">
+                        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex-1 flex flex-col">
+                            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                                <div>
+                                    <h3 class="text-sm font-bold flex items-center gap-2">
+                                        <i class="fa-solid fa-pen-to-square text-indigo-400"></i>
+                                        台本エディタ（1行 ＝ 1セリフカード）
+                                    </h3>
+                                    <p id="script-stats" class="text-xs text-slate-400 mt-0.5">総セリフ: 0行 / 想定時間: 約0分0秒</p>
+                                </div>
+                                <button onclick="applyScriptAndSwitch()"
+                                    class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-indigo-600/30 transition flex items-center gap-2">
+                                    <i class="fa-solid fa-tv"></i>
+                                    カンペ画面に反映して戻る
+                                </button>
+                            </div>
+
+                            <textarea id="script-textarea" rows="15" oninput="handleScriptInput()"
+                                class="w-full flex-1 bg-slate-950 border border-slate-800 rounded-xl p-4 text-slate-100 font-mono text-sm leading-relaxed focus:outline-none focus:border-indigo-500 resize-y"
+                                placeholder="[A] ここにセリフを入力します (SE: 効果音) [テロップ: 字幕]"></textarea>
+
+                            <!-- 1行ずつ追加できる簡単フォーム -->
+                            <div class="mt-3 pt-3 border-t border-slate-800 flex flex-col sm:flex-row gap-2">
+                                <select id="gui-speaker-select" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"></select>
+                                <input type="text" id="gui-line-input" placeholder="セリフを入力してEnter..."
+                                    onkeydown="if(event.key==='Enter'){event.preventDefault();addLineViaGui();}"
+                                    class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+                                <input type="text" id="gui-cue-input" placeholder="演出メモ (例: SE:歓声)"
+                                    onkeydown="if(event.key==='Enter'){event.preventDefault();addLineViaGui();}"
+                                    class="sm:w-40 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+                                <button onclick="addLineViaGui()" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition shrink-0">
+                                    + 行追加
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </section>
+
+        <!-- =====================================================
+             VIEW 3: 編集チェックリスト ＆ NG/見どころ記録画面 (Checklist)
+             ===================================================== -->
+        <section id="view-checklist" class="flex-1 overflow-y-auto p-4 md:p-6 hidden">
+            <div class="max-w-7xl mx-auto space-y-6 pb-16">
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4 shadow-xl">
+                    <div>
+                        <h2 class="text-base sm:text-lg font-bold flex items-center gap-2">
+                            <i class="fa-solid fa-scissors text-amber-400"></i>
+                            動画編集アシスタント（NG・見どころタイムスタンプ ＆ 演出ToDo）
+                        </h2>
+                        <p class="text-xs text-slate-400 mt-1">
+                            撮影中に記録したNG・見どころの秒数と、台本内のSE・テロップ指示を一覧でチェック＆書き出しできます。
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="copyExportReport()" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg transition">
+                            <i class="fa-regular fa-copy"></i> 編集メモを一括コピー
+                        </button>
+                        <button onclick="downloadCsvReport()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-2 transition">
+                            <i class="fa-solid fa-download"></i> CSV出力
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <!-- NG / 見どころ履歴 -->
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="font-bold text-sm sm:text-base flex items-center gap-2">
+                                <i class="fa-solid fa-stopwatch text-rose-400"></i>
+                                撮影中のNG / 見どころタイムスタンプ
+                            </h3>
+                            <button onclick="clearMarkers()" class="text-xs text-slate-400 hover:text-rose-400 transition">
+                                <i class="fa-solid fa-trash-can"></i> 履歴クリア
+                            </button>
+                        </div>
+                        <div id="markers-list-container" class="space-y-2.5 flex-1"></div>
+                    </div>
+
+                    <!-- SE・テロップToDoリスト -->
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="font-bold text-sm sm:text-base flex items-center gap-2">
+                                <i class="fa-solid fa-wand-sparkles text-emerald-400"></i>
+                                台本内の演出・SE・テロップ ToDoリスト
+                            </h3>
+                            <span id="cue-progress-label" class="text-xs font-bold text-emerald-400 bg-emerald-950/60 px-2.5 py-1 rounded-full border border-emerald-800/50">
+                                完了: 0 / 0
+                            </span>
+                        </div>
+                        <div id="cues-checklist-container" class="space-y-2.5 flex-1"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- =====================================================
+         モーダル：Bluetoothリモコン / キーボード操作ガイド
+         ===================================================== -->
+    <div id="shortcut-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 class="font-bold text-base flex items-center gap-2">
+                    <i class="fa-solid fa-gamepad text-indigo-400"></i>
+                    直感操作・リモコン・キー割り当てガイド
+                </h3>
+                <button onclick="toggleModal('shortcut-modal')" class="text-slate-400 hover:text-white text-lg">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="space-y-2 text-xs text-slate-300">
+                <p class="text-slate-400 mb-2">
+                    画面上のどのセリフでも<strong>直接タップ（クリック）するとその行に即座にジャンプ</strong>します。また、Bluetoothリモコンやフットペダル、キーボードでも操作可能です。
+                </p>
+                <div class="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                    <span class="font-bold text-white">自動再生 開始 / 一時停止</span>
+                    <kbd class="px-2.5 py-1 bg-slate-800 rounded text-emerald-300 font-mono">Space (スペースキー)</kbd>
+                </div>
+                <div class="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                    <span class="font-bold text-white">次のページへ一気に送る</span>
+                    <div class="flex gap-1">
+                        <kbd class="px-2 py-1 bg-slate-800 rounded text-indigo-300 font-mono">→</kbd>
+                        <kbd class="px-2 py-1 bg-slate-800 rounded text-indigo-300 font-mono">PageDown</kbd>
+                        <kbd class="px-2 py-1 bg-slate-800 rounded text-indigo-300 font-mono">Enter</kbd>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                    <span class="font-bold text-white">前のページへ戻る</span>
+                    <div class="flex gap-1">
+                        <kbd class="px-2 py-1 bg-slate-800 rounded text-indigo-300 font-mono">←</kbd>
+                        <kbd class="px-2 py-1 bg-slate-800 rounded text-indigo-300 font-mono">PageUp</kbd>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                    <span class="font-bold text-white">1行ずつ下へ / 上へ移動</span>
+                    <div class="flex gap-1">
+                        <kbd class="px-2 py-1 bg-slate-800 rounded text-amber-300 font-mono">↓</kbd>
+                        <kbd class="px-2 py-1 bg-slate-800 rounded text-amber-300 font-mono">↑</kbd>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                    <span class="font-bold text-white">❌ NG記録 / ⭐ 見どころ記録</span>
+                    <div class="flex gap-1">
+                        <kbd class="px-2.5 py-1 bg-rose-950 border border-rose-700 rounded text-rose-300 font-mono">N キー</kbd>
+                        <kbd class="px-2.5 py-1 bg-amber-950 border border-amber-700 rounded text-amber-300 font-mono">M キー</kbd>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                    <span class="font-bold text-white">自分のセリフ強調 切替</span>
+                    <div class="flex gap-1">
+                        <kbd class="px-2 py-1 bg-slate-800 rounded text-slate-300 font-mono">0(全員)</kbd>
+                        <kbd class="px-2 py-1 bg-slate-800 rounded text-slate-300 font-mono">1〜4(話者A〜D)</kbd>
+                    </div>
+                </div>
+            </div>
+            <div class="text-right pt-2">
+                <button onclick="toggleModal('shortcut-modal')" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs">閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- クリップボードコピー用ヘルパー -->
+    <textarea id="clipboard-helper" class="fixed -top-96 opacity-0 pointer-events-none"></textarea>
+
+    <script>
+        // =====================================================
+        // アプリケーションの状態管理 (State)
+        // =====================================================
+        const state = {
+            currentTab: 'prompter',
+
+            // デバイス比率の自動判別モード ('AUTO' または手動指定)
+            deviceModeSetting: 'AUTO',
+            activeDeviceProfile: 'PC_STANDARD', // 'PHONE_PORTRAIT', 'FOLDABLE_PASSPORT', 'TABLET', 'PC_STANDARD', 'ULTRAWIDE'
+
+            // 出演者（最大4人）
+            speakers: [
+                { id: 'A', name: 'タカシ (MC)', color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.14)', border: '#0284c7', enabled: true },
+                { id: 'B', name: 'ユウキ (相方)', color: '#fb7185', bg: 'rgba(251, 113, 133, 0.14)', border: '#e11d48', enabled: true },
+                { id: 'C', name: 'ゲストC', color: '#34d399', bg: 'rgba(52, 211, 153, 0.14)', border: '#059669', enabled: false },
+                { id: 'D', name: '天の声D', color: '#c084fc', bg: 'rgba(192, 132, 252, 0.14)', border: '#9333ea', enabled: false }
+            ],
+            focusSpeakerId: 'ALL', // 'ALL' or 'A', 'B', 'C', 'D'
+
+            // 1ページの表示行数（1〜20行 または 999=全行表示）
+            linesPerPage: 6,
+            fontSizeLevel: 1, // 0: 小, 1: 標準, 2: 大, 3: 特大
+            mirrorMode: false,
+
+            // 台本データ（スライディングウィンドウ方式：下部に来たら自動で1行送る）
+            parsedLines: [],
+            pages: [],
+            windowStartIndex: 0, // 現在画面に表示している先頭行のインデックス (0-based)
+            activeGlobalLineIndex: 0, // 現在読んでいる行の全体インデックス (0-based)
+
+            // 1文字単位の自動再生エンジン
+            isAutoPlaying: false,
+            charsPerMinute: 330, // 標準 330文字/分 (秒間5.5文字)
+            currentLineElapsedSec: 0,
+            lastFrameTime: null,
+            animationFrameId: null,
+
+            // 撮影タイマー＆マーカー記録
+            isRecording: false,
+            recordingSeconds: 0,
+            recordingIntervalId: null,
+            markers: [],
+            cueCheckStates: {}
+        };
+
+        // サンプル台本（強制改ページを無くし、何行設定でも自由に行数変更できるように設計）
+        const SAMPLE_SCRIPTS = {
+            solo: `[A] 皆さんこんにちは！今回は「スマホやPCを本格的なカンペ機材にする方法」を解説します！ (SE: 和太鼓ドン！) [テロップ: 本日のテーマ発表]
+[A] 1人で解説動画を撮るとき、台本を暗記しようとして何度も噛んでしまい、撮影が2時間も伸びた経験はありませんか？
+[A] このプロンプターなら、あなたが普段話すスピードに合わせて、1文字ずつ正確にハイライトが進んでいきます。 [テロップ: 1文字単位の自動再生]
+[A] 短いセリフでも、2行や3行にわたる長いセリフでも、文字数と句読点の間を計算して自然なテンポで進行します。
+[A] 上の「1ページ: 〇行」ボタンから、1画面に表示する行数を1行〜20行、または全行表示まで自在に切り替えられます！ (SE: キラーン✨)
+[A] さらに、GoogleスプレッドシートやExcelで作った台本も、コピー＆ペースト一発で取り込めるので準備も一瞬です。
+[A] それでは早速、下の「自動再生 開始」ボタンを押して、読みやすさを体験してみてください！ [テロップ: ぜひ試してみてね！]`,
+
+            duo: `[A] はい、どうも皆さんこんにちは！タカシです！ (SE: 和太鼓ドン！) [テロップ: オープニング挨拶]
+[B] こんにちは、ユウキです！いやー、今回の新システム、めちゃくちゃ見やすくなりましたね！
+[A] そうなんです！まず注目してほしいのが、自動再生の進み方です。枠の長さではなく、1文字ずつ正確に色が変わっていきます！ (SE: ピコン！) [テロップ: 1文字ずつ正確に進行]
+[B] ほんとだ！これなら短い相槌でも、2行以上に折り返す長いセリフでも、話すスピードがピッタリ合いますね！ [カット: ユウキにズーム]
+[A] そして上の「自分の表示」ボタンで自分の名前を選ぶと、自分のセリフだけ大きく強調されます。
+[B] 掛け合いの撮影でも、次に自分がいつ喋るか一目でわかるから、カメラ目線のまま自然にトークできますね！
+[A] 1ページに表示する行数も、上の「1ページ: 6行」ボタンから8行でも12行でも全行でも自由に増やせます！ (SE: キラーン✨)
+[B] スプレッドシートで作った台本もそのままコピペで貼れるし、撮影中のNG記録もワンタップで残せます。
+[A] ぜひ下の「💬 標準ペース」ボタンから、自分たちにぴったりの話すテンポを選んでみてください！
+[B] それでは本番撮影スタートしていきましょう！せーのっ、どうぞ！ (SE: タイトルコール音) [テロップ: 本編スタート！]`,
+
+            quartet: `[A] さあ始まりました！4人徹底討論スペシャルー！進行のタカシです！ (SE: 歓声＆拍手) [テロップ: 4人企画スタート]
+[B] ユウキです！今日もバチバチに語っていきましょう！
+[C] ゲストのCです、呼んでいただきありがとうございます！ [テロップ: ゲスト紹介]
+[D] そして天の声のDでお送りします。本日のテーマは「最強の夜食メニュー決定戦」です！ (SE: ゴング音)
+[A] まずはユウキからプレゼンお願いします！制限時間は30秒！
+[B] 僕が推すのはやっぱり「背脂マシマシのカップラーメン」ですね。深夜2時に食べる罪悪感がたまらないんです！ [画像: カップ麺の写真]
+[C] いやいや、翌朝むくむじゃないですか！私は断然「だし茶漬け」派ですよ。サラッといけて胃にも優しい！ (SE: ツッコミ音)
+[D] おっと、ここで意見が真っ二つに割れましたね。視聴者の皆さんはどちら派でしょうか？ [テロップ: コメント欄で教えてね！]`
+        };
+
+        // =====================================================
+        // 初期化 ＆ ウィンドウリサイズ監視（デバイス比率自動判別）
+        // =====================================================
+        window.onload = function () {
+            renderSpeakerSettings();
+            document.getElementById('script-textarea').value = SAMPLE_SCRIPTS.duo;
+            detectAndApplyDeviceRatio();
+            parseScriptAndPaginate();
+            updatePaceUI();
+            renderPrompter();
+            renderChecklistView();
+            setupKeyboardShortcuts();
+
+            window.addEventListener('resize', () => {
+                detectAndApplyDeviceRatio();
+            });
+
+            // ポップオーバー外クリックで閉じる
+            document.addEventListener('click', (e) => {
+                const popovers = ['device-popover', 'lines-popover', 'pace-popover'];
+                popovers.forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el && !el.classList.contains('hidden')) {
+                        const parent = el.parentElement;
+                        if (parent && !parent.contains(e.target)) {
+                            el.classList.add('hidden');
+                        }
+                    }
+                });
+            });
+        };
+
+        function toggleDropdownPanel(id) {
+            const popovers = ['device-popover', 'lines-popover', 'pace-popover'];
+            popovers.forEach(pId => {
+                const el = document.getElementById(pId);
+                if (!el) return;
+                if (pId === id) {
+                    el.classList.toggle('hidden');
+                } else {
+                    el.classList.add('hidden');
+                }
+            });
+        }
+
+        // =====================================================
+        // 1. マルチデバイス画面比率の自動判別 ＆ レイアウト最適化
+        // =====================================================
+        function detectAndApplyDeviceRatio() {
+            const w = window.innerWidth;
+            const h = Math.max(window.innerHeight, 1);
+            const ratio = w / h;
+
+            const aspectTextEl = document.getElementById('current-aspect-text');
+            if (aspectTextEl) {
+                aspectTextEl.textContent = `${w}×${h} (${ratio.toFixed(2)}:1)`;
+            }
+
+            let detected = 'PC_STANDARD';
+            if (ratio < 0.78) {
+                detected = 'PHONE_PORTRAIT'; // 通常スマホ縦 (9:16〜9:20)
+            } else if (ratio >= 0.78 && ratio <= 1.28 && w < 1100) {
+                detected = 'FOLDABLE_PASSPORT'; // 折りたたみスマホ展開時(約1:1) / パスポートサイズ
+            } else if (ratio > 1.28 && ratio <= 1.62 && w <= 1366) {
+                detected = 'TABLET'; // タブレット (4:3 / 16:10)
+            } else if (ratio >= 1.95 || w >= 1800) {
+                detected = 'ULTRAWIDE'; // ウルトラワイドモニター (21:9 / 32:9 またはフルスクリーン大画面)
+            } else {
+                detected = 'PC_STANDARD'; // 通常PCモニター (16:9)
+            }
+
+            state.activeDeviceProfile = (state.deviceModeSetting === 'AUTO') ? detected : state.deviceModeSetting;
+            applyDeviceProfileUI(state.activeDeviceProfile, state.deviceModeSetting === 'AUTO');
+        }
+
+        function setDeviceMode(mode) {
+            state.deviceModeSetting = mode;
+            document.getElementById('device-popover').classList.add('hidden');
+            detectAndApplyDeviceRatio();
+            renderPrompter();
+        }
+
+        function getContainerWidthClassByProfile(profile) {
+            if (profile === 'PHONE_PORTRAIT') return 'max-w-full';
+            if (profile === 'FOLDABLE_PASSPORT') return 'max-w-2xl';
+            if (profile === 'TABLET') return 'max-w-3xl';
+            if (profile === 'ULTRAWIDE') return 'max-w-6xl'; // ウルトラワイド時は中央ステージを広々と使う
+            return 'max-w-5xl'; // PC_STANDARD
+        }
+
+        function applyDeviceProfileUI(profile, isAuto) {
+            const badgeIcon = document.getElementById('device-mode-icon');
+            const badgeLabel = document.getElementById('device-mode-label');
+            const leftPanel = document.getElementById('ultrawide-left-panel');
+            const rightPanel = document.getElementById('ultrawide-right-panel');
+            const linesContainer = document.getElementById('prompter-lines-container');
+            const scrollArea = document.getElementById('prompter-scroll-area');
+            const edgePrev = document.getElementById('edge-tap-prev');
+            const edgeNext = document.getElementById('edge-tap-next');
+
+            // リセット
+            leftPanel.classList.add('hidden');
+            leftPanel.classList.remove('flex');
+            rightPanel.classList.add('hidden');
+            rightPanel.classList.remove('flex');
+
+            const prefix = isAuto ? '自動: ' : '固定: ';
+
+            if (profile === 'PHONE_PORTRAIT') {
+                badgeIcon.className = 'fa-solid fa-mobile-screen-button';
+                badgeLabel.textContent = `${prefix}📱 スマホ縦`;
+                scrollArea.className = 'flex-1 overflow-y-auto px-8 py-3 flex flex-col';
+                edgePrev.className = 'absolute left-1 top-4 bottom-4 w-7 z-10 flex items-center justify-center group opacity-30 hover:opacity-100 transition';
+                edgeNext.className = 'absolute right-1 top-4 bottom-4 w-7 z-10 flex items-center justify-center group opacity-30 hover:opacity-100 transition';
+            } else if (profile === 'FOLDABLE_PASSPORT') {
+                badgeIcon.className = 'fa-solid fa-book-open';
+                badgeLabel.textContent = `${prefix}📖 折りたたみ/スクエア`;
+                scrollArea.className = 'flex-1 overflow-y-auto px-14 py-4 flex flex-col';
+                edgePrev.className = 'absolute left-2 top-2 bottom-2 w-12 z-10 flex items-center justify-center group opacity-45 hover:opacity-100 transition';
+                edgeNext.className = 'absolute right-2 top-2 bottom-2 w-12 z-10 flex items-center justify-center group opacity-45 hover:opacity-100 transition';
+            } else if (profile === 'TABLET') {
+                badgeIcon.className = 'fa-solid fa-tablet-screen-button';
+                badgeLabel.textContent = `${prefix}📟 タブレット`;
+                scrollArea.className = 'flex-1 overflow-y-auto px-14 py-5 flex flex-col';
+                edgePrev.className = 'absolute left-2 top-4 bottom-4 w-12 z-10 flex items-center justify-center group opacity-35 hover:opacity-100 transition';
+                edgeNext.className = 'absolute right-2 top-4 bottom-4 w-12 z-10 flex items-center justify-center group opacity-35 hover:opacity-100 transition';
+            } else if (profile === 'ULTRAWIDE') {
+                badgeIcon.className = 'fa-solid fa-panorama';
+                badgeLabel.textContent = `${prefix}🖥️ ウルトラワイド`;
+                // ウルトラワイドでは左右に専用スタジオパネルを表示し、中央もワイドに広げて余白を解消
+                leftPanel.classList.remove('hidden');
+                leftPanel.classList.add('flex');
+                rightPanel.classList.remove('hidden');
+                rightPanel.classList.add('flex');
+                scrollArea.className = 'flex-1 overflow-y-auto px-16 xl:px-20 py-4 flex flex-col';
+                edgePrev.className = 'absolute left-3 top-4 bottom-4 w-12 z-10 flex items-center justify-center group opacity-45 hover:opacity-100 transition';
+                edgeNext.className = 'absolute right-3 top-4 bottom-4 w-12 z-10 flex items-center justify-center group opacity-45 hover:opacity-100 transition';
+            } else {
+                badgeIcon.className = 'fa-solid fa-desktop';
+                badgeLabel.textContent = `${prefix}💻 PCワイド`;
+                scrollArea.className = 'flex-1 overflow-y-auto px-14 py-4 flex flex-col';
+                edgePrev.className = 'absolute left-2 top-4 bottom-4 w-12 z-10 flex items-center justify-center group opacity-35 hover:opacity-100 transition';
+                edgeNext.className = 'absolute right-2 top-4 bottom-4 w-12 z-10 flex items-center justify-center group opacity-35 hover:opacity-100 transition';
+            }
+        }
+
+        // =====================================================
+        // タブ切替 ＆ モーダル
+        // =====================================================
+        function switchTab(tabName) {
+            state.currentTab = tabName;
+            ['prompter', 'editor', 'checklist'].forEach(t => {
+                const view = document.getElementById(`view-${t}`);
+                const btn = document.getElementById(`tab-btn-${t}`);
+                if (t === tabName) {
+                    view.classList.remove('hidden');
+                    btn.className = 'px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 bg-indigo-600 text-white shadow';
+                } else {
+                    view.classList.add('hidden');
+                    btn.className = 'px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 text-slate-400 hover:text-white relative';
+                }
+            });
+
+            if (tabName !== 'prompter' && state.isAutoPlaying) {
+                stopAutoPlay();
+            }
+            if (tabName === 'prompter') {
+                renderPrompter();
+            } else if (tabName === 'checklist') {
+                renderChecklistView();
+            }
+        }
+
+        function toggleModal(modalId) {
+            const modal = document.getElementById(modalId);
+            if (modal.classList.contains('hidden')) {
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            } else {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }
+        }
+
+        // =====================================================
+        // 2. 1文字単位のウェイト計算 ＆ 台本パース・ページ分割
+        // =====================================================
+        // 各文字の読み上げウェイト（句読点で自然な間を作る）
+        function getCharWeight(ch) {
+            if (/[、,，]/.test(ch)) return 2.8; // 読点は約2.8文字分の間
+            if (/[。．！？!?]/.test(ch)) return 4.2; // 句点・感嘆符は約4.2文字分の間
+            if (/[「」『』（）()【】]/.test(ch)) return 0.5;
+            return 1.0;
+        }
+
+        // 文字列を1文字ごとのタイミング情報配列に分解し、読み上げ所要秒数を算出
+        function analyzeCharactersAndDuration(cleanText, cpm) {
+            const chars = Array.from(cleanText || '');
+            if (chars.length === 0) {
+                return { chars: [], charWeights: [], cumulativeWeights: [], totalWeight: 1, durationSec: 1.5 };
+            }
+
+            const charWeights = [];
+            const cumulativeWeights = [];
+            let totalWeight = 0;
+
+            chars.forEach(ch => {
+                const w = getCharWeight(ch);
+                charWeights.push(w);
+                totalWeight += w;
+                cumulativeWeights.push(totalWeight);
+            });
+
+            // 1文字ウェイトあたりの秒数 = 60 / cpm
+            const secPerWeight = 60 / Math.max(cpm, 100);
+            // 行末の余韻(0.35秒)を加算
+            const durationSec = Math.max(1.0, (totalWeight * secPerWeight) + 0.35);
+
+            return { chars, charWeights, cumulativeWeights, totalWeight, durationSec };
+        }
+
+        function parseScriptAndPaginate() {
+            const rawText = document.getElementById('script-textarea').value;
+            const rawLines = rawText.split('\n');
+
+            const parsedLines = [];
+            const effectiveLimit = state.linesPerPage >= 999 ? 99999 : state.linesPerPage;
+
+            rawLines.forEach((raw, idx) => {
+                const trimmed = raw.trim();
+                if (!trimmed) return;
+
+                // 明示的な `---` 改ページ記法がある場合はスキップ
+                if (/^-{3,}/.test(trimmed)) {
+                    return;
+                }
+
+                // 話者タグ抽出 例: `[A] セリフ` または `A: セリフ`
+                let speakerId = 'A';
+                let bodyText = trimmed;
+                const spMatch = trimmed.match(/^(?:\[([A-Da-d])\]|([A-Da-d])[：:])\s*(.*)/);
+                if (spMatch) {
+                    speakerId = (spMatch[1] || spMatch[2]).toUpperCase();
+                    bodyText = spMatch[3];
+                }
+
+                // 演出メモ（SE・テロップ・画像・カット等）を抽出
+                const cues = [];
+                const cueRegex = /(?:\(([^)]+)\)|\[([^\]]+)\])/g;
+                let match;
+                while ((match = cueRegex.exec(bodyText)) !== null) {
+                    const content = (match[1] || match[2]).trim();
+                    let cueType = 'MEMO';
+                    if (/^(SE|効果音|BGM)/i.test(content)) cueType = 'SE';
+                    else if (/^(テロップ|字幕|Telop)/i.test(content)) cueType = 'TELOP';
+                    else if (/^(画像|動画|資料|Image)/i.test(content)) cueType = 'IMAGE';
+                    else if (/^(カット|カメラ|演出)/i.test(content)) cueType = 'CUT';
+
+                    cues.push({
+                        id: `cue-${idx}-${cues.length}`,
+                        type: cueType,
+                        text: content
+                    });
+                }
+
+                const cleanText = bodyText.replace(cueRegex, '').trim() || '（演出のみ）';
+                const analysis = analyzeCharactersAndDuration(cleanText, state.charsPerMinute);
+
+                const lineIndex = parsedLines.length;
+                const lineObj = {
+                    lineNumber: lineIndex + 1,
+                    globalIndex: lineIndex,
+                    speakerId,
+                    cleanText,
+                    cues,
+                    analysis,
+                    pageIndex: Math.floor(lineIndex / effectiveLimit),
+                    indexInPage: lineIndex % effectiveLimit
+                };
+
+                parsedLines.push(lineObj);
+            });
+
+            // ページ目次・チェックリスト用の論理ページ配列も構築
+            const currentPages = [];
+            for (let i = 0; i < parsedLines.length; i += effectiveLimit) {
+                currentPages.push(parsedLines.slice(i, i + effectiveLimit));
+            }
+            if (currentPages.length === 0) currentPages.push([]);
+
+            state.parsedLines = parsedLines;
+            state.pages = currentPages;
+
+            if (state.activeGlobalLineIndex >= parsedLines.length) {
+                state.activeGlobalLineIndex = Math.max(0, parsedLines.length - 1);
+            }
+            syncWindowToActiveLine(true);
+            updateTotalTimeStats();
+        }
+
+        // 現在読んでいる行が画面の中央〜下部に来たら、常に下に2〜3行の先読み余白を残して表示ウィンドウを自動1行送りする
+        function syncWindowToActiveLine(forceRecenter = false) {
+            const total = state.parsedLines.length;
+            if (total === 0) {
+                state.windowStartIndex = 0;
+                return;
+            }
+            const limit = state.linesPerPage >= 999 ? total : state.linesPerPage;
+            if (limit >= total) {
+                state.windowStartIndex = 0;
+                return;
+            }
+
+            // 画面下部に常時確保したい「次のカンペ（先読み行数）」を計算
+            // 例: 6行表示なら常に下に3行分残す（上から3行目＝インデックス2を読んだら次から1行ずつスライド）
+            let lookaheadRows = 1;
+            if (limit <= 1) lookaheadRows = 0;
+            else if (limit === 2) lookaheadRows = 1;
+            else if (limit <= 4) lookaheadRows = 2;
+            else if (limit <= 7) lookaheadRows = 3;
+            else lookaheadRows = Math.max(3, Math.floor(limit * 0.45));
+
+            // ウィンドウ内でアクティブ行が留まる基準位置（上から anchorOffset 行目）
+            const anchorOffset = Math.max(0, limit - 1 - lookaheadRows);
+            const maxStart = Math.max(0, total - limit);
+
+            if (forceRecenter) {
+                const desired = state.activeGlobalLineIndex - anchorOffset;
+                state.windowStartIndex = Math.max(0, Math.min(maxStart, desired));
+                return;
+            }
+
+            // アクティブ行が現在のウィンドウより上に出た場合（↑キー等で戻ったとき）は上へ追従
+            if (state.activeGlobalLineIndex < state.windowStartIndex) {
+                state.windowStartIndex = state.activeGlobalLineIndex;
+            }
+            // アクティブ行が基準位置（中央〜下部）を超えたら、下に lookaheadRows 行が見えるよう1行ずつウィンドウをスライド
+            else if (state.activeGlobalLineIndex - state.windowStartIndex > anchorOffset) {
+                const nextStart = state.activeGlobalLineIndex - anchorOffset;
+                state.windowStartIndex = Math.max(0, Math.min(maxStart, nextStart));
+            }
+
+            // 範囲外補正
+            state.windowStartIndex = Math.max(0, Math.min(maxStart, state.windowStartIndex));
+        }
+
+        function updateTotalTimeStats() {
+            let totalSec = 0;
+            state.parsedLines.forEach(l => {
+                l.analysis = analyzeCharactersAndDuration(l.cleanText, state.charsPerMinute);
+                totalSec += l.analysis.durationSec;
+            });
+            const mins = Math.floor(totalSec / 60);
+            const secs = Math.round(totalSec % 60);
+            const timeStr = `約${mins}分${String(secs).padStart(2, '0')}秒`;
+
+            const statsEl = document.getElementById('script-stats');
+            if (statsEl) {
+                statsEl.textContent = `総セリフ: ${state.parsedLines.length}行 (${state.pages.length}ページ) / 想定動画尺: ${timeStr}`;
+            }
+            const paceTotalEl = document.getElementById('pace-total-time-badge');
+            if (paceTotalEl) {
+                paceTotalEl.textContent = `台本全体の尺: ${timeStr}`;
+            }
+            const paceSummaryEl = document.getElementById('pace-sec-summary');
+            if (paceSummaryEl) {
+                const cps = (state.charsPerMinute / 60).toFixed(1);
+                paceSummaryEl.textContent = `秒間${cps}文字 (全体: ${timeStr})`;
+            }
+            const uwTotalEl = document.getElementById('uw-total-duration');
+            if (uwTotalEl) {
+                uwTotalEl.textContent = `全体 ${timeStr}`;
+            }
+        }
+
+        // =====================================================
+        // 3. 1ページの表示行数変更（制限なし：1〜20行・全行）
+        // =====================================================
+        function setLinesPerPage(val) {
+            state.linesPerPage = val;
+            updateLinesPerPageUI();
+            parseScriptAndPaginate();
+            syncWindowToActiveLine(true);
+            renderPrompter();
+            document.getElementById('lines-popover').classList.add('hidden');
+        }
+
+        function changeLinesPerPage(delta) {
+            const current = state.linesPerPage >= 999 ? state.parsedLines.length : state.linesPerPage;
+            const nextVal = Math.min(30, Math.max(1, current + delta));
+            state.linesPerPage = nextVal;
+            updateLinesPerPageUI();
+            parseScriptAndPaginate();
+            syncWindowToActiveLine(true);
+            renderPrompter();
+        }
+
+        function updateLinesPerPageUI() {
+            const label = state.linesPerPage >= 999 ? '全行' : `${state.linesPerPage}行`;
+            document.getElementById('lines-per-page-badge').textContent = label;
+            document.getElementById('lines-popover-val').textContent = label;
+        }
+
+        // =====================================================
+        // 4. 分かりやすい「話すペース」設定
+        // =====================================================
+        function setPacePreset(cpm) {
+            state.charsPerMinute = cpm;
+            document.getElementById('speed-slider').value = cpm;
+            updatePaceUI();
+            updateTotalTimeStats();
+            renderPrompter();
+        }
+
+        function adjustPace(delta) {
+            const nextVal = Math.min(600, Math.max(180, state.charsPerMinute + delta));
+            setPacePreset(nextVal);
+        }
+
+        function updateSpeed(val) {
+            state.charsPerMinute = parseInt(val, 10);
+            updatePaceUI();
+            updateTotalTimeStats();
+            renderPrompter();
+        }
+
+        function updatePaceUI() {
+            const cpm = state.charsPerMinute;
+            document.getElementById('pace-cpm-detail').textContent = cpm;
+
+            let badgeText = '💬 標準ペース';
+            if (cpm <= 285) badgeText = '🐢 ゆっくり丁寧';
+            else if (cpm <= 375) badgeText = '💬 標準トーク';
+            else if (cpm <= 470) badgeText = '⚡ テンポよく';
+            else badgeText = '🚀 早口・ショート';
+
+            document.getElementById('pace-preset-badge').textContent = badgeText;
+
+            // プリセットボタンのハイライト更新
+            [260, 330, 420, 520].forEach(preset => {
+                const btn = document.getElementById(`pace-btn-${preset}`);
+                if (!btn) return;
+                if (Math.abs(cpm - preset) <= 20) {
+                    btn.className = 'pace-preset-btn p-2.5 rounded-xl border border-indigo-500 bg-indigo-950/50 text-left transition';
+                } else {
+                    btn.className = 'pace-preset-btn p-2.5 rounded-xl border border-slate-800 bg-slate-950 hover:border-indigo-500 text-left transition';
+                }
+            });
+        }
+
+        // =====================================================
+        // 5. プロンプター画面レンダリング（1文字ごとのSPAN生成）
+        // =====================================================
+        function renderPrompter() {
+            const container = document.getElementById('prompter-lines-container');
+            if (!container) return;
+            container.innerHTML = '';
+
+            const totalLines = state.parsedLines.length;
+            const limit = state.linesPerPage >= 999 ? Math.max(1, totalLines) : state.linesPerPage;
+            const totalPages = Math.max(1, Math.ceil(totalLines / limit));
+            const currentLogicalPage = totalLines > 0 ? Math.floor(state.activeGlobalLineIndex / limit) + 1 : 1;
+
+            // 上部ページ表示と現在のウィンドウ範囲（何行目〜何行目を表示中か）を更新
+            document.getElementById('current-page-num').textContent = currentLogicalPage;
+            document.getElementById('total-page-num').textContent = totalPages;
+
+            if (totalLines === 0) {
+                container.innerHTML = `
+                    <div class="text-center text-slate-500 py-16 bg-slate-900/40 rounded-2xl border border-dashed border-slate-800">
+                        台本が空です。上の「台本・外部取込」タブからセリフを入力するか、スプレッドシートを貼り付けてください。
+                    </div>`;
+                return;
+            }
+
+            // 表示ウィンドウ（windowStartIndex から limit 行分）を正確に切り出す
+            const visibleLines = state.parsedLines.slice(state.windowStartIndex, state.windowStartIndex + limit);
+
+            // 1ページの表示行数やデバイス比率に応じて横幅と余白を最適化（max-w-4xlの固定上書きを廃止）
+            const isCompactPhone = state.activeDeviceProfile === 'PHONE_PORTRAIT';
+            const isUltrawide = state.activeDeviceProfile === 'ULTRAWIDE';
+            const isDense = limit >= 6;
+            const isVeryDense = limit >= 9;
+            const widthClass = getContainerWidthClassByProfile(state.activeDeviceProfile);
+
+            container.className = `w-full ${widthClass} mx-auto my-auto transition-all ${isVeryDense ? 'space-y-1.5' : (isDense ? 'space-y-2.5' : 'space-y-3.5')}`;
+
+            let mainFontSizes, subFontSizes;
+            if (isCompactPhone || isVeryDense) {
+                mainFontSizes = ['text-base', 'text-lg sm:text-xl', 'text-xl sm:text-2xl', 'text-2xl sm:text-3xl'];
+                subFontSizes = ['text-xs', 'text-sm sm:text-base', 'text-base sm:text-lg', 'text-lg sm:text-xl'];
+            } else if (isUltrawide && !isDense) {
+                mainFontSizes = ['text-2xl', 'text-3xl 2xl:text-4xl', 'text-4xl 2xl:text-5xl', 'text-5xl 2xl:text-6xl'];
+                subFontSizes = ['text-lg', 'text-xl 2xl:text-2xl', 'text-2xl 2xl:text-3xl', 'text-3xl 2xl:text-4xl'];
+            } else if (isDense) {
+                mainFontSizes = ['text-lg md:text-xl', 'text-xl md:text-2xl xl:text-3xl', 'text-2xl md:text-3xl xl:text-4xl', 'text-3xl md:text-4xl xl:text-5xl'];
+                subFontSizes = ['text-sm md:text-base', 'text-base md:text-lg xl:text-xl', 'text-lg md:text-xl xl:text-2xl', 'text-xl md:text-2xl xl:text-3xl'];
+            } else {
+                mainFontSizes = ['text-xl md:text-2xl', 'text-2xl md:text-3xl lg:text-4xl', 'text-3xl md:text-4xl lg:text-5xl', 'text-4xl md:text-5xl lg:text-6xl'];
+                subFontSizes = ['text-base md:text-lg', 'text-lg md:text-xl lg:text-2xl', 'text-xl md:text-2xl lg:text-3xl', 'text-2xl md:text-3xl lg:text-4xl'];
+            }
+
+            const cardPaddingClass = isVeryDense ? 'p-2 sm:p-2.5' : (isDense ? 'p-3 sm:p-4' : 'p-4 sm:p-5');
+
+            visibleLines.forEach((line) => {
+                const gIdx = line.globalIndex;
+                const speaker = state.speakers.find(s => s.id === line.speakerId) || state.speakers[0];
+                const isActiveLine = gIdx === state.activeGlobalLineIndex;
+                const isPassedLine = gIdx < state.activeGlobalLineIndex;
+
+                // 自分のセリフ強調モード判定
+                const isMyTurn = state.focusSpeakerId === 'ALL' || state.focusSpeakerId === line.speakerId;
+                const isSpecificFocusMyTurn = state.focusSpeakerId !== 'ALL' && state.focusSpeakerId === line.speakerId;
+
+                const card = document.createElement('div');
+                card.id = `prompter-card-${gIdx}`;
+                card.onclick = () => selectLineByGlobalIndex(gIdx);
+
+                let cardClasses = `rounded-2xl ${cardPaddingClass} transition-colors duration-200 cursor-pointer border-2 relative overflow-hidden `;
+                if (isActiveLine) {
+                    cardClasses += 'ring-2 ring-indigo-400/70 shadow-xl ';
+                }
+                if (isMyTurn) {
+                    cardClasses += isPassedLine ? 'opacity-60 ' : 'opacity-100 ';
+                } else {
+                    cardClasses += 'opacity-40 hover:opacity-75 ';
+                }
+
+                card.className = cardClasses;
+                card.style.backgroundColor = isMyTurn ? speaker.bg : 'rgba(15, 23, 42, 0.55)';
+                card.style.borderColor = isActiveLine ? speaker.color : (isMyTurn ? speaker.border : '#1e293b');
+
+                // 演出メモバッジ
+                const cueBadgesHtml = line.cues.map(cue => {
+                    let badgeStyle = 'bg-slate-800 text-slate-300 border-slate-600';
+                    let icon = 'fa-note-sticky';
+                    if (cue.type === 'SE') {
+                        badgeStyle = 'bg-amber-500/20 text-amber-300 border-amber-500/40';
+                        icon = 'fa-volume-high';
+                    } else if (cue.type === 'TELOP') {
+                        badgeStyle = 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
+                        icon = 'fa-closed-captioning';
+                    } else if (cue.type === 'IMAGE') {
+                        badgeStyle = 'bg-sky-500/20 text-sky-300 border-sky-500/40';
+                        icon = 'fa-image';
+                    } else if (cue.type === 'CUT') {
+                        badgeStyle = 'bg-purple-500/20 text-purple-300 border-purple-500/40';
+                        icon = 'fa-video';
+                    }
+                    return `
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-bold border ${badgeStyle}">
+                            <i class="fa-solid ${icon} text-[9px]"></i>
+                            ${escapeHtml(cue.text)}
+                        </span>
+                    `;
+                }).join('');
+
+                const estSec = line.analysis.durationSec.toFixed(1);
+                const fontSizeClass = isMyTurn ? mainFontSizes[state.fontSizeLevel] : subFontSizes[state.fontSizeLevel];
+                const fontWeightClass = isMyTurn ? 'font-extrabold tracking-tight' : 'font-medium';
+
+                // セリフ本文を1文字ごとの <span> に分解してレンダリング
+                const charsHtml = line.analysis.chars.map((ch, cIdx) => {
+                    let charStateClass = isPassedLine ? 'char-passed' : (isActiveLine ? 'char-upcoming-active' : 'char-upcoming-inactive');
+                    return `<span id="line-${gIdx}-char-${cIdx}" class="script-char ${charStateClass}">${escapeHtml(ch)}</span>`;
+                }).join('');
+
+                card.innerHTML = `
+                    <div class="flex flex-col gap-1">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                <span class="px-2.5 py-0.5 rounded-lg font-extrabold text-xs text-slate-950 shadow" style="background-color: ${speaker.color}">
+                                    ${escapeHtml(speaker.name)}
+                                </span>
+                                ${isSpecificFocusMyTurn ? `<span class="px-1.5 py-0.5 rounded-md bg-rose-500 text-white text-[10px] font-black">★ あなたのセリフ</span>` : ''}
+                                ${isActiveLine ? `<span class="px-2 py-0.5 rounded-md bg-indigo-500/30 border border-indigo-400/50 text-indigo-200 text-[10px] font-bold">▶ 現在行</span>` : ''}
+                                ${cueBadgesHtml}
+                            </div>
+                            <span class="text-[10px] sm:text-xs font-mono text-slate-400">
+                                #${line.lineNumber} / 全${totalLines}行 (${line.analysis.chars.length}文字・${estSec}秒)
+                            </span>
+                        </div>
+                        <div class="${fontSizeClass} ${fontWeightClass} leading-snug sm:leading-relaxed break-words">
+                            ${charsHtml}
+                        </div>
+                    </div>
+                    ${isActiveLine ? `<div class="absolute bottom-0 left-0 right-0 h-1 bg-slate-900/60"><div id="active-card-progress-bar" class="h-full bg-gradient-to-r from-amber-400 to-yellow-300 line-progress-bar" style="width: 0%"></div></div>` : ''}
+                `;
+
+                container.appendChild(card);
+            });
+
+            // アクティブ行の文字ハイライト状態を即時反映
+            updateActiveLineCharHighlights();
+
+            // 縦スクロールが発生している場合でも、現在読んでいる行が常に下部に余裕を持った位置に収まるよう自動追従
+            const activeCard = document.getElementById(`prompter-card-${state.activeGlobalLineIndex}`);
+            const scrollArea = document.getElementById('prompter-scroll-area');
+            if (activeCard && scrollArea) {
+                const areaRect = scrollArea.getBoundingClientRect();
+                const cardRect = activeCard.getBoundingClientRect();
+                const relativeTop = cardRect.top - areaRect.top;
+                if (relativeTop > areaRect.height * 0.55 || relativeTop < 0) {
+                    const targetScrollTop = scrollArea.scrollTop + relativeTop - (areaRect.height * 0.28);
+                    scrollArea.scrollTo({ top: Math.max(0, targetScrollTop), behavior: 'smooth' });
+                }
+            }
+
+            renderUltrawideSidePanels();
+        }
+
+        // アクティブなセリフ内の1文字単位ハイライトを更新（全文字共通のbackground-clip描画＋ソフトエッジワイプでチカチカゼロ）
+        function updateActiveLineCharHighlights() {
+            const activeLine = state.parsedLines[state.activeGlobalLineIndex];
+            if (!activeLine) return;
+
+            const analysis = activeLine.analysis;
+            const totalChars = analysis.chars.length;
+            if (totalChars === 0) return;
+
+            // 経過秒数から現在どの文字ウェイトまで進んでいるか計算
+            const secPerWeight = 60 / Math.max(state.charsPerMinute, 100);
+            const currentWeightProgress = state.currentLineElapsedSec / secPerWeight;
+            const gIdx = state.activeGlobalLineIndex;
+
+            for (let cIdx = 0; cIdx < totalChars; cIdx++) {
+                const spanEl = document.getElementById(`line-${gIdx}-char-${cIdx}`);
+                if (!spanEl) continue;
+
+                const prevCumWeight = cIdx === 0 ? 0 : analysis.cumulativeWeights[cIdx - 1];
+                const thisCumWeight = analysis.cumulativeWeights[cIdx];
+                const charWeight = analysis.charWeights[cIdx] || 1;
+
+                if (state.currentLineElapsedSec <= 0 && !state.isAutoPlaying) {
+                    if (spanEl.className !== 'script-char char-upcoming-active') {
+                        spanEl.className = 'script-char char-upcoming-active';
+                    }
+                } else if (currentWeightProgress >= thisCumWeight) {
+                    if (spanEl.className !== 'script-char char-passed') {
+                        spanEl.className = 'script-char char-passed';
+                    }
+                } else if (currentWeightProgress >= prevCumWeight && currentWeightProgress < thisCumWeight) {
+                    const ratio = Math.min(1, Math.max(0, (currentWeightProgress - prevCumWeight) / charWeight));
+                    const pct = (ratio * 100).toFixed(1) + '%';
+                    if (spanEl.className !== 'script-char char-current') {
+                        spanEl.className = 'script-char char-current';
+                    }
+                    spanEl.style.setProperty('--wipe-pct', pct);
+                } else {
+                    if (spanEl.className !== 'script-char char-upcoming-active') {
+                        spanEl.className = 'script-char char-upcoming-active';
+                    }
+                }
+            }
+
+            // アクティブカード下部のスムーズ進行バーとウルトラワイド右パネルのゲージを連動更新
+            const lineProgressPct = Math.min(100, Math.max(0, (state.currentLineElapsedSec / activeLine.analysis.durationSec) * 100));
+            const cardBarEl = document.getElementById('active-card-progress-bar');
+            if (cardBarEl) {
+                cardBarEl.style.width = `${lineProgressPct.toFixed(1)}%`;
+            }
+            const uwBarEl = document.getElementById('uw-line-progress');
+            if (uwBarEl) {
+                uwBarEl.style.width = `${lineProgressPct.toFixed(1)}%`;
+            }
+            const uwTimerEl = document.getElementById('uw-line-timer');
+            if (uwTimerEl) {
+                uwTimerEl.textContent = `${state.currentLineElapsedSec.toFixed(1)}s / ${activeLine.analysis.durationSec.toFixed(1)}s`;
+            }
+        }
+
+        // ウルトラワイド用の左右パネル描画（全セリフの進行タイムライン＆次話者予告）
+        function renderUltrawideSidePanels() {
+            const outlineEl = document.getElementById('ultrawide-outline-list');
+            if (outlineEl && state.activeDeviceProfile === 'ULTRAWIDE') {
+                outlineEl.innerHTML = state.parsedLines.map((line, idx) => {
+                    const isCurrent = idx === state.activeGlobalLineIndex;
+                    const isPassed = idx < state.activeGlobalLineIndex;
+                    const sp = state.speakers.find(s => s.id === line.speakerId) || state.speakers[0];
+                    const previewText = line.cleanText.slice(0, 26);
+                    return `
+                        <button id="uw-outline-item-${idx}" onclick="selectLineByGlobalIndex(${idx})"
+                            class="w-full text-left p-2 rounded-xl border transition flex items-start gap-2 ${isCurrent ? 'bg-indigo-600/25 border-indigo-400 text-white font-bold shadow' : (isPassed ? 'bg-slate-950/30 border-slate-800/50 text-slate-500' : 'bg-slate-950/70 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white')}">
+                            <span class="px-1.5 py-0.5 rounded font-mono text-[10px] font-bold text-slate-950 shrink-0" style="background-color: ${sp.color}">
+                                #${line.lineNumber}
+                            </span>
+                            <span class="truncate text-[11px] leading-snug">${escapeHtml(previewText)}</span>
+                        </button>
+                    `;
+                }).join('');
+
+                // 現在行を左タイムラインの中央に自動スクロール
+                const activeOutlineItem = document.getElementById(`uw-outline-item-${state.activeGlobalLineIndex}`);
+                if (activeOutlineItem) {
+                    activeOutlineItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                }
+            }
+
+            // 次のセリフの話者予告更新
+            const nextSpeakerBadge = document.getElementById('uw-next-speaker-badge');
+            if (nextSpeakerBadge) {
+                const nextLine = state.parsedLines[state.activeGlobalLineIndex + 1];
+                if (nextLine) {
+                    const nextSp = state.speakers.find(s => s.id === nextLine.speakerId) || state.speakers[0];
+                    nextSpeakerBadge.innerHTML = `<span class="px-2 py-0.5 rounded text-[11px] text-slate-950 font-extrabold" style="background-color:${nextSp.color}">${escapeHtml(nextSp.name)}</span>`;
+                } else {
+                    nextSpeakerBadge.textContent = '（最終行です）';
+                }
+            }
+
+            const miniMarkersEl = document.getElementById('ultrawide-markers-mini');
+            if (miniMarkersEl) {
+                if (state.markers.length === 0) {
+                    miniMarkersEl.innerHTML = `<div class="text-[11px] text-slate-500 text-center py-6 border border-dashed border-slate-800 rounded-xl">まだ記録がありません</div>`;
+                } else {
+                    miniMarkersEl.innerHTML = state.markers.slice().reverse().map(m => `
+                        <div class="p-2.5 rounded-xl bg-slate-950 border ${m.type === 'NG' ? 'border-rose-500/40' : 'border-amber-500/40'} text-xs">
+                            <div class="flex items-center justify-between font-bold">
+                                <span class="${m.type === 'NG' ? 'text-rose-400' : 'text-amber-400'}">${m.type === 'NG' ? '❌ NG' : '⭐ 見どころ'}</span>
+                                <span class="font-mono text-[11px] text-slate-400">${m.timestamp} (P.${m.page})</span>
+                            </div>
+                            <div class="text-[11px] text-slate-300 truncate mt-1">${escapeHtml(m.text)}</div>
+                        </div>
+                    `).join('');
+                }
+            }
+        }
+
+        function jumpToPage(pIdx) {
+            const limit = state.linesPerPage >= 999 ? Math.max(1, state.parsedLines.length) : state.linesPerPage;
+            state.activeGlobalLineIndex = Math.min(state.parsedLines.length - 1, Math.max(0, pIdx * limit));
+            state.windowStartIndex = state.activeGlobalLineIndex;
+            state.currentLineElapsedSec = 0;
+            state.lastFrameTime = performance.now();
+            renderPrompter();
+        }
+
+        // =====================================================
+        // 6. 自動再生ループ（1文字単位の進行 ＆ 下部到達時の自動1行送り）
+        // =====================================================
+        function toggleAutoPlay() {
+            if (state.isAutoPlaying) {
+                stopAutoPlay();
+            } else {
+                startAutoPlay();
+            }
+        }
+
+        function startAutoPlay() {
+            if (state.pages.length === 0) return;
+            state.isAutoPlaying = true;
+            state.lastFrameTime = performance.now();
+
+            const btn = document.getElementById('btn-autoplay');
+            const icon = document.getElementById('icon-autoplay');
+            const label = document.getElementById('label-autoplay');
+            btn.className = 'px-4 sm:px-5 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-extrabold text-xs sm:text-sm shadow-lg shadow-amber-500/25 transition flex items-center gap-2';
+            icon.className = 'fa-solid fa-pause';
+            label.textContent = '自動再生 一時停止';
+
+            state.animationFrameId = requestAnimationFrame(autoPlayLoop);
+        }
+
+        function stopAutoPlay() {
+            state.isAutoPlaying = false;
+            if (state.animationFrameId) {
+                cancelAnimationFrame(state.animationFrameId);
+                state.animationFrameId = null;
+            }
+            const btn = document.getElementById('btn-autoplay');
+            const icon = document.getElementById('icon-autoplay');
+            const label = document.getElementById('label-autoplay');
+            if (btn) {
+                btn.className = 'px-4 sm:px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-emerald-600/25 transition flex items-center gap-2';
+                icon.className = 'fa-solid fa-play';
+                label.textContent = '自動再生 開始';
+            }
+        }
+
+        function autoPlayLoop(now) {
+            if (!state.isAutoPlaying) return;
+            const dtSeconds = (now - state.lastFrameTime) / 1000;
+            state.lastFrameTime = now;
+
+            const activeLine = state.parsedLines[state.activeGlobalLineIndex];
+            if (!activeLine) {
+                stopAutoPlay();
+                return;
+            }
+
+            state.currentLineElapsedSec += dtSeconds;
+
+            if (state.currentLineElapsedSec >= activeLine.analysis.durationSec) {
+                state.currentLineElapsedSec = 0;
+                // 次の行へ進み、画面下部に差しかかっていれば自動的に1行分ウィンドウをスライド
+                if (state.activeGlobalLineIndex < state.parsedLines.length - 1) {
+                    state.activeGlobalLineIndex++;
+                    syncWindowToActiveLine();
+                    renderPrompter();
+                } else {
+                    stopAutoPlay();
+                    showPrompterToast('🎉 最後のセリフまで自動再生が完了しました', 'info');
+                    return;
+                }
+            } else {
+                updateActiveLineCharHighlights();
+            }
+
+            if (state.isAutoPlaying) {
+                state.animationFrameId = requestAnimationFrame(autoPlayLoop);
+            }
+        }
+
+        // =====================================================
+        // 7. ページ送り・行移動・自分のセリフ強調切替
+        // =====================================================
+        // 画面1つ分（設定行数分）を一気に送る
+        function nextPage() {
+            const total = state.parsedLines.length;
+            if (total === 0) return;
+            const limit = state.linesPerPage >= 999 ? total : state.linesPerPage;
+            const maxStart = Math.max(0, total - limit);
+
+            if (state.windowStartIndex < maxStart) {
+                // ウィンドウを設定行数分一気に進める
+                state.windowStartIndex = Math.min(maxStart, state.windowStartIndex + limit);
+                state.activeGlobalLineIndex = state.windowStartIndex;
+                state.currentLineElapsedSec = 0;
+                state.lastFrameTime = performance.now();
+                renderPrompter();
+            } else if (state.activeGlobalLineIndex < total - 1) {
+                // すでに最終ウィンドウを表示中なら最終行へ進める
+                state.activeGlobalLineIndex = total - 1;
+                state.currentLineElapsedSec = 0;
+                state.lastFrameTime = performance.now();
+                renderPrompter();
+            } else if (state.isAutoPlaying) {
+                stopAutoPlay();
+            }
+        }
+
+        // 画面1つ分（設定行数分）を一気に戻る
+        function prevPage() {
+            const total = state.parsedLines.length;
+            if (total === 0) return;
+            const limit = state.linesPerPage >= 999 ? total : state.linesPerPage;
+
+            if (state.windowStartIndex > 0) {
+                state.windowStartIndex = Math.max(0, state.windowStartIndex - limit);
+                state.activeGlobalLineIndex = state.windowStartIndex;
+                state.currentLineElapsedSec = 0;
+                state.lastFrameTime = performance.now();
+                renderPrompter();
+            } else if (state.activeGlobalLineIndex > 0) {
+                state.activeGlobalLineIndex = 0;
+                state.currentLineElapsedSec = 0;
+                state.lastFrameTime = performance.now();
+                renderPrompter();
+            }
+        }
+
+        function selectLineByGlobalIndex(gIdx) {
+            state.activeGlobalLineIndex = gIdx;
+            syncWindowToActiveLine();
+            state.currentLineElapsedSec = 0;
+            state.lastFrameTime = performance.now();
+            renderPrompter();
+        }
+
+        function stepLine(delta) {
+            const total = state.parsedLines.length;
+            if (total === 0) return;
+            const nextIdx = Math.min(total - 1, Math.max(0, state.activeGlobalLineIndex + delta));
+            if (nextIdx !== state.activeGlobalLineIndex) {
+                state.activeGlobalLineIndex = nextIdx;
+                syncWindowToActiveLine();
+                state.currentLineElapsedSec = 0;
+                state.lastFrameTime = performance.now();
+                renderPrompter();
+            }
+        }
+
+        function changeFontSize(delta) {
+            const labels = ['小', '標準', '大', '特大'];
+            state.fontSizeLevel = Math.min(3, Math.max(0, state.fontSizeLevel + delta));
+            document.getElementById('font-size-label').textContent = labels[state.fontSizeLevel];
+            renderPrompter();
+        }
+
+        function toggleMirror() {
+            state.mirrorMode = !state.mirrorMode;
+            const stage = document.getElementById('prompter-lines-container');
+            const btn = document.getElementById('mirror-btn');
+            if (state.mirrorMode) {
+                stage.classList.add('mirror-mode');
+                btn.classList.add('bg-indigo-600', 'text-white', 'border-indigo-500');
+                btn.classList.remove('bg-slate-950', 'text-slate-400');
+            } else {
+                stage.classList.remove('mirror-mode');
+                btn.classList.remove('bg-indigo-600', 'text-white', 'border-indigo-500');
+                btn.classList.add('bg-slate-950', 'text-slate-400');
+            }
+        }
+
+        function renderFocusSpeakerButtons() {
+            const container = document.getElementById('focus-speaker-buttons');
+            if (!container) return;
+            container.innerHTML = '';
+
+            const allBtn = document.createElement('button');
+            const isAll = state.focusSpeakerId === 'ALL';
+            allBtn.className = `px-2.5 py-1 rounded-xl text-xs font-bold transition border ${isAll ? 'bg-white text-slate-950 border-white shadow' : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'}`;
+            allBtn.textContent = '全員均等';
+            allBtn.onclick = () => setFocusSpeaker('ALL');
+            container.appendChild(allBtn);
+
+            state.speakers.filter(s => s.enabled).forEach(sp => {
+                const isSelected = state.focusSpeakerId === sp.id;
+                const btn = document.createElement('button');
+                btn.className = `px-2.5 py-1 rounded-xl text-xs font-bold transition border flex items-center gap-1.5`;
+                if (isSelected) {
+                    btn.style.backgroundColor = sp.color;
+                    btn.style.borderColor = sp.color;
+                    btn.style.color = '#060911';
+                } else {
+                    btn.style.backgroundColor = '#020617';
+                    btn.style.borderColor = '#1e293b';
+                    btn.style.color = sp.color;
+                }
+                btn.innerHTML = `<span class="w-2 h-2 rounded-full" style="background:${isSelected ? '#060911' : sp.color}"></span><span>${escapeHtml(sp.name)}のみ拡大</span>`;
+                btn.onclick = () => setFocusSpeaker(sp.id);
+                container.appendChild(btn);
+            });
+        }
+
+        function setFocusSpeaker(speakerId) {
+            state.focusSpeakerId = speakerId;
+            renderFocusSpeakerButtons();
+            renderPrompter();
+        }
+
+        // =====================================================
+        // 8. スプレッドシート / CSV / 外部ファイルのインポート機能
+        // =====================================================
+        // 話者名またはID文字列から [A]〜[D] のIDを自動判定・登録
+        function resolveSpeakerIdFromCell(rawSpeakerStr) {
+            const cleaned = (rawSpeakerStr || '').trim();
+            if (!cleaned) return 'A';
+
+            // すでに A, B, C, D の場合
+            if (/^[A-Da-d]$/.test(cleaned)) {
+                const id = cleaned.toUpperCase();
+                const sp = state.speakers.find(s => s.id === id);
+                if (sp) sp.enabled = true;
+                return id;
+            }
+
+            // 既存の話者名と前方一致または部分一致するかチェック
+            for (const sp of state.speakers) {
+                if (sp.name.includes(cleaned) || cleaned.includes(sp.name.split(' ')[0])) {
+                    sp.enabled = true;
+                    return sp.id;
+                }
+            }
+
+            // 未登録の名前なら、無効になっている枠があれば割り当てる
+            const unused = state.speakers.find(s => !s.enabled);
+            if (unused) {
+                unused.name = cleaned;
+                unused.enabled = true;
+                return unused.id;
+            }
+            return 'A';
+        }
+
+        // 2次元配列（スプレッドシートのTSVまたはCSVパース結果）を台本テキストに変換
+        function convertRowsToScriptText(rows) {
+            const resultLines = [];
+            rows.forEach((cols, idx) => {
+                const c0 = (cols[0] || '').trim();
+                const c1 = (cols[1] || '').trim();
+                const c2 = (cols[2] || '').trim();
+
+                // ヘッダー行（話者 / セリフ / 演出 など）はスキップ
+                if (idx === 0 && /^(話者|名前|担当|speaker)/i.test(c0) && /^(セリフ|台本|本文|text|line)/i.test(c1)) {
+                    return;
+                }
+
+                if (!c0 && !c1) return;
+
+                // 1列しか無い場合はそのまま1行として扱う
+                if (cols.length === 1 || (!c1 && !c2)) {
+                    resultLines.push(c0);
+                    return;
+                }
+
+                const spId = resolveSpeakerIdFromCell(c0);
+                let lineStr = `[${spId}] ${c1}`;
+                if (c2) {
+                    // すでに括弧がついていなければ [ ] で囲む
+                    if (/^(\(|\[)/.test(c2)) {
+                        lineStr += ` ${c2}`;
+                    } else {
+                        lineStr += ` [${c2}]`;
+                    }
+                }
+                resultLines.push(lineStr);
+            });
+            return resultLines.join('\n');
+        }
+
+        // 方法1: スプレッドシート / Excelからのコピペ取込 (TSV / CSV自動判別)
+        function importFromSheetPaste() {
+            const raw = document.getElementById('sheet-paste-input').value.trim();
+            if (!raw) {
+                showPrompterToast('⚠️ 貼り付けるテキストが空です', 'ng');
+                return;
+            }
+
+            const lines = raw.split(/\r?\n/);
+            const rows = lines.map(l => {
+                if (l.includes('\t')) return l.split('\t');
+                return parseCsvLine(l);
+            });
+
+            const converted = convertRowsToScriptText(rows);
+            if (converted) {
+                document.getElementById('script-textarea').value = converted;
+                document.getElementById('sheet-paste-input').value = '';
+                renderSpeakerSettings();
+                parseScriptAndPaginate();
+                switchTab('prompter');
+                showPrompterToast('✅ スプレッドシートのデータを台本に取り込みました！', 'info');
+            }
+        }
+
+        // CSVの1行を正しく配列に分割する簡易パーサー
+        function parseCsvLine(line) {
+            const result = [];
+            let cur = '';
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+                const ch = line[i];
+                if (ch === '"') {
+                    if (inQuotes && line[i + 1] === '"') {
+                        cur += '"';
+                        i++;
+                    } else {
+                        inQuotes = !inQuotes;
+                    }
+                } else if (ch === ',' && !inQuotes) {
+                    result.push(cur);
+                    cur = '';
+                } else {
+                    cur += ch;
+                }
+            }
+            result.push(cur);
+            return result;
+        }
+
+        // 方法2: CSV / TSV / TXT ファイルアップロード
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                const content = e.target.result;
+                const ext = file.name.split('.').pop().toLowerCase();
+
+                if (ext === 'csv' || ext === 'tsv') {
+                    const lines = content.split(/\r?\n/);
+                    const rows = lines.map(l => ext === 'tsv' ? l.split('\t') : parseCsvLine(l));
+                    const converted = convertRowsToScriptText(rows);
+                    document.getElementById('script-textarea').value = converted;
+                } else {
+                    document.getElementById('script-textarea').value = content;
+                }
+
+                renderSpeakerSettings();
+                parseScriptAndPaginate();
+                switchTab('prompter');
+                showPrompterToast(`✅ ファイル「${file.name}」を取り込みました！`, 'info');
+            };
+            reader.readAsText(file, 'UTF-8');
+            event.target.value = '';
+        }
+
+        // 方法3: Googleスプレッドシートの共有URLからCSVを取得してインポート
+        async function importFromGoogleSheetUrl() {
+            const urlInput = document.getElementById('gsheet-url-input').value.trim();
+            if (!urlInput) {
+                showPrompterToast('⚠️ GoogleスプレッドシートのURLを入力してください', 'ng');
+                return;
+            }
+
+            let fetchUrl = urlInput;
+            const idMatch = urlInput.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+            if (idMatch && !urlInput.includes('/export')) {
+                const sheetId = idMatch[1];
+                fetchUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
+            }
+
+            try {
+                showPrompterToast('⏳ スプレッドシートを読み込み中...', 'info');
+                const response = await fetch(fetchUrl);
+                if (!response.ok) throw new Error('Fetch failed');
+                const csvText = await response.text();
+                const lines = csvText.split(/\r?\n/);
+                const rows = lines.map(l => parseCsvLine(l));
+                const converted = convertRowsToScriptText(rows);
+
+                if (converted) {
+                    document.getElementById('script-textarea').value = converted;
+                    renderSpeakerSettings();
+                    parseScriptAndPaginate();
+                    switchTab('prompter');
+                    showPrompterToast('✅ Googleスプレッドシートから台本を同期しました！', 'info');
+                }
+            } catch (err) {
+                showPrompterToast('⚠️ URLからの直接取得に失敗しました。シートの共有設定を確認するか、「1. セルを貼り付け」をご利用ください。', 'ng');
+            }
+        }
+
+        // 記入用テンプレートCSVのダウンロード
+        function downloadTemplateCsv() {
+            const sampleRows = [
+                ['話者', 'セリフ', '演出・SE・テロップ指示'],
+                ['A', 'はい、どうも皆さんこんにちは！タカシです！', 'SE: 和太鼓ドン！'],
+                ['B', 'こんにちは、ユウキです！今回の企画はスプレッドシート連携です！', 'テロップ: スプレッドシート完全対応'],
+                ['A', 'A列に話者、B列にセリフ、C列に演出メモを書くだけでそのまま取り込めます！', 'SE: キラーン✨'],
+                ['B', '普段スプレッドシートで台本を作っている人には最高に便利ですね！', 'カット: 2人笑顔でカメラ目線']
+            ];
+            const csvContent = '\uFEFF' + sampleRows.map(r => r.map(c => `"${c}"`).join(',')).join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'StudioCue_台本テンプレート.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // =====================================================
+        // 9. 話者設定・エディタ補助機能
+        // =====================================================
+        function renderSpeakerSettings() {
+            const listEl = document.getElementById('speaker-settings-list');
+            const quickBtnsEl = document.getElementById('quick-speaker-buttons');
+            const guiSelectEl = document.getElementById('gui-speaker-select');
+            if (!listEl) return;
+
+            listEl.innerHTML = '';
+            quickBtnsEl.innerHTML = '';
+            guiSelectEl.innerHTML = '';
+
+            state.speakers.forEach((sp, idx) => {
+                const row = document.createElement('div');
+                row.className = `flex items-center gap-2.5 p-2 rounded-xl border transition ${sp.enabled ? 'bg-slate-950 border-slate-800' : 'bg-slate-950/40 border-slate-800/40 opacity-55'}`;
+                row.innerHTML = `
+                    <input type="checkbox" ${sp.enabled ? 'checked' : ''} onchange="toggleSpeakerEnabled(${idx}, this.checked)"
+                        class="w-4 h-4 accent-indigo-500 rounded cursor-pointer">
+                    <span class="w-6 h-6 rounded-lg font-mono font-bold text-xs flex items-center justify-center text-slate-950 shrink-0" style="background-color: ${sp.color}">
+                        ${sp.id}
+                    </span>
+                    <input type="text" value="${escapeHtml(sp.name)}" oninput="updateSpeakerName(${idx}, this.value)"
+                        class="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-white focus:outline-none focus:border-indigo-500">
+                    <input type="color" value="${sp.color}" oninput="updateSpeakerColor(${idx}, this.value)"
+                        class="w-7 h-7 rounded cursor-pointer bg-transparent border-0">
+                `;
+                listEl.appendChild(row);
+
+                if (sp.enabled) {
+                    const qBtn = document.createElement('button');
+                    qBtn.className = 'px-2.5 py-1 rounded-lg text-xs font-bold border transition hover:opacity-80';
+                    qBtn.style.backgroundColor = sp.bg;
+                    qBtn.style.borderColor = sp.border;
+                    qBtn.style.color = sp.color;
+                    qBtn.textContent = `+ [${sp.id}] ${sp.name}`;
+                    qBtn.onclick = () => insertTag(`\n[${sp.id}] `);
+                    quickBtnsEl.appendChild(qBtn);
+
+                    const opt = document.createElement('option');
+                    opt.value = sp.id;
+                    opt.textContent = `[${sp.id}] ${sp.name}`;
+                    guiSelectEl.appendChild(opt);
+                }
+            });
+
+            renderFocusSpeakerButtons();
+        }
+
+        function toggleSpeakerEnabled(idx, checked) {
+            const enabledCount = state.speakers.filter(s => s.enabled).length;
+            if (!checked && enabledCount <= 1) {
+                renderSpeakerSettings();
+                return;
+            }
+            state.speakers[idx].enabled = checked;
+            if (!checked && state.focusSpeakerId === state.speakers[idx].id) {
+                state.focusSpeakerId = 'ALL';
+            }
+            renderSpeakerSettings();
+            parseScriptAndPaginate();
+            renderPrompter();
+        }
+
+        function updateSpeakerName(idx, newName) {
+            state.speakers[idx].name = newName || `話者${state.speakers[idx].id}`;
+            renderFocusSpeakerButtons();
+            parseScriptAndPaginate();
+        }
+
+        function updateSpeakerColor(idx, hex) {
+            state.speakers[idx].color = hex;
+            state.speakers[idx].border = hex;
+            state.speakers[idx].bg = hex + '24';
+            renderSpeakerSettings();
+            parseScriptAndPaginate();
+            renderPrompter();
+        }
+
+        function insertTag(tagText) {
+            const textarea = document.getElementById('script-textarea');
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const text = textarea.value;
+            textarea.value = text.substring(0, start) + tagText + text.substring(end);
+            textarea.focus();
+            textarea.selectionStart = textarea.selectionEnd = start + tagText.length;
+            handleScriptInput();
+        }
+
+        function addLineViaGui() {
+            const spId = document.getElementById('gui-speaker-select').value;
+            const lineText = document.getElementById('gui-line-input').value.trim();
+            const cueText = document.getElementById('gui-cue-input').value.trim();
+            if (!lineText) return;
+
+            let newEntry = `[${spId}] ${lineText}`;
+            if (cueText) newEntry += ` [${cueText}]`;
+
+            const textarea = document.getElementById('script-textarea');
+            textarea.value = textarea.value.trim() + '\n' + newEntry;
+            document.getElementById('gui-line-input').value = '';
+            document.getElementById('gui-cue-input').value = '';
+            handleScriptInput();
+        }
+
+        function loadSampleScript(type) {
+            if (type === 'quartet') {
+                state.speakers.forEach(s => s.enabled = true);
+            } else if (type === 'solo') {
+                state.speakers[0].enabled = true;
+                state.speakers[1].enabled = false;
+                state.speakers[2].enabled = false;
+                state.speakers[3].enabled = false;
+            } else {
+                state.speakers[0].enabled = true;
+                state.speakers[1].enabled = true;
+                state.speakers[2].enabled = false;
+                state.speakers[3].enabled = false;
+            }
+            renderSpeakerSettings();
+            document.getElementById('script-textarea').value = SAMPLE_SCRIPTS[type];
+            state.windowStartIndex = 0;
+            state.activeGlobalLineIndex = 0;
+            handleScriptInput();
+            showPrompterToast('✨ サンプル台本を読み込みました', 'info');
+        }
+
+        function handleScriptInput() {
+            parseScriptAndPaginate();
+        }
+
+        function applyScriptAndSwitch() {
+            parseScriptAndPaginate();
+            switchTab('prompter');
+        }
+
+        // =====================================================
+        // 10. キーボード / リモコン操作 ＆ 撮影タイマー・NG記録
+        // =====================================================
+        function setupKeyboardShortcuts() {
+            window.addEventListener('keydown', (e) => {
+                const tag = document.activeElement ? document.activeElement.tagName.toUpperCase() : '';
+                if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
+                if (state.currentTab !== 'prompter') return;
+
+                switch (e.key) {
+                    case 'ArrowRight':
+                    case 'PageDown':
+                    case 'Enter':
+                        e.preventDefault();
+                        nextPage();
+                        break;
+                    case 'ArrowLeft':
+                    case 'PageUp':
+                    case 'Backspace':
+                        e.preventDefault();
+                        prevPage();
+                        break;
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        stepLine(1);
+                        break;
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        stepLine(-1);
+                        break;
+                    case ' ':
+                        e.preventDefault();
+                        toggleAutoPlay();
+                        break;
+                    case 'n':
+                    case 'N':
+                        e.preventDefault();
+                        recordMarker('NG');
+                        break;
+                    case 'm':
+                    case 'M':
+                        e.preventDefault();
+                        recordMarker('GOOD');
+                        break;
+                    case '0':
+                        setFocusSpeaker('ALL');
+                        break;
+                    case '1':
+                        if (state.speakers[0].enabled) setFocusSpeaker('A');
+                        break;
+                    case '2':
+                        if (state.speakers[1].enabled) setFocusSpeaker('B');
+                        break;
+                    case '3':
+                        if (state.speakers[2].enabled) setFocusSpeaker('C');
+                        break;
+                    case '4':
+                        if (state.speakers[3].enabled) setFocusSpeaker('D');
+                        break;
+                }
+            });
+        }
+
+        function formatTime(totalSec) {
+            const mins = String(Math.floor(totalSec / 60)).padStart(2, '0');
+            const secs = String(totalSec % 60).padStart(2, '0');
+            return `${mins}:${secs}`;
+        }
+
+        function toggleRecordingTimer() {
+            const btn = document.getElementById('btn-rec-toggle');
+            const dot = document.getElementById('rec-dot');
+            if (state.isRecording) {
+                state.isRecording = false;
+                clearInterval(state.recordingIntervalId);
+                btn.textContent = '再開';
+                btn.className = 'px-2 py-0.5 rounded-md bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold transition';
+                dot.className = 'w-2 h-2 rounded-full bg-amber-400';
+            } else {
+                state.isRecording = true;
+                state.recordingIntervalId = setInterval(() => {
+                    state.recordingSeconds++;
+                    document.getElementById('timer-display').textContent = formatTime(state.recordingSeconds);
+                }, 1000);
+                btn.textContent = '一時停止';
+                btn.className = 'px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 text-rose-400 border border-rose-500/40 text-[11px] font-bold transition';
+                dot.className = 'w-2 h-2 rounded-full bg-rose-500 animate-ping';
+            }
+        }
+
+        function resetRecordingTimer() {
+            state.isRecording = false;
+            clearInterval(state.recordingIntervalId);
+            state.recordingSeconds = 0;
+            document.getElementById('timer-display').textContent = '00:00';
+            document.getElementById('btn-rec-toggle').textContent = '撮影開始';
+            document.getElementById('btn-rec-toggle').className = 'px-2 py-0.5 rounded-md bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold transition';
+            document.getElementById('rec-dot').className = 'w-2 h-2 rounded-full bg-slate-600';
+        }
+
+        function recordMarker(type) {
+            if (!state.isRecording && state.recordingSeconds === 0) {
+                toggleRecordingTimer();
+            }
+
+            const timestamp = formatTime(state.recordingSeconds);
+            const activeLine = state.parsedLines[state.activeGlobalLineIndex] || state.parsedLines[0];
+            const speaker = activeLine ? (state.speakers.find(s => s.id === activeLine.speakerId) || state.speakers[0]) : { name: '-' };
+            const limit = state.linesPerPage >= 999 ? Math.max(1, state.parsedLines.length) : state.linesPerPage;
+            const logicalPage = activeLine ? Math.floor(activeLine.globalIndex / limit) + 1 : 1;
+
+            const marker = {
+                id: Date.now(),
+                timestamp,
+                type,
+                page: logicalPage,
+                lineNumber: activeLine ? activeLine.lineNumber : '-',
+                speakerName: speaker.name,
+                text: activeLine ? activeLine.cleanText : '（セリフなし）'
+            };
+
+            state.markers.push(marker);
+            updateMarkerBadgeCount();
+            renderUltrawideSidePanels();
+
+            const stage = document.getElementById('prompter-stage');
+            const flashClass = type === 'NG' ? 'flash-ng' : 'flash-good';
+            stage.classList.add(flashClass);
+            setTimeout(() => stage.classList.remove(flashClass), 350);
+
+            if (type === 'NG') {
+                showPrompterToast(`❌ NGマーク記録 [${timestamp}] P.${marker.page}`, 'ng');
+            } else {
+                showPrompterToast(`⭐ 見どころ記録 [${timestamp}] P.${marker.page}`, 'good');
+            }
+        }
+
+        function updateMarkerBadgeCount() {
+            const badge = document.getElementById('badge-mark-count');
+            if (state.markers.length > 0) {
+                badge.textContent = state.markers.length;
+                badge.classList.remove('hidden');
+            } else {
+                badge.classList.add('hidden');
+            }
+        }
+
+        let toastTimeout = null;
+        function showPrompterToast(message, styleType) {
+            const toast = document.getElementById('prompter-toast');
+            const inner = document.getElementById('prompter-toast-inner');
+            if (styleType === 'ng') {
+                inner.className = 'px-4 py-2 rounded-full font-bold text-xs sm:text-sm shadow-2xl flex items-center gap-2 border bg-rose-950/95 text-rose-200 border-rose-500';
+            } else if (styleType === 'good') {
+                inner.className = 'px-4 py-2 rounded-full font-bold text-xs sm:text-sm shadow-2xl flex items-center gap-2 border bg-amber-950/95 text-amber-200 border-amber-500';
+            } else {
+                inner.className = 'px-4 py-2 rounded-full font-bold text-xs sm:text-sm shadow-2xl flex items-center gap-2 border bg-indigo-950/95 text-indigo-200 border-indigo-500';
+            }
+            inner.textContent = message;
+            toast.classList.remove('opacity-0', '-translate-y-2');
+            toast.classList.add('opacity-100', 'translate-y-0');
+
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => {
+                toast.classList.add('opacity-0', '-translate-y-2');
+                toast.classList.remove('opacity-100', 'translate-y-0');
+            }, 2200);
+        }
+
+        // =====================================================
+        // 11. 編集リスト ＆ CSVエクスポート
+        // =====================================================
+        function renderChecklistView() {
+            const markersContainer = document.getElementById('markers-list-container');
+            const cuesContainer = document.getElementById('cues-checklist-container');
+
+            if (state.markers.length === 0) {
+                markersContainer.innerHTML = `
+                    <div class="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl text-xs">
+                        まだ記録がありません。<br>カンペ撮影画面の「❌ NG」「⭐ 見どころ」ボタン（または N / M キー）で記録できます。
+                    </div>`;
+            } else {
+                markersContainer.innerHTML = state.markers.map((m, idx) => {
+                    const isNg = m.type === 'NG';
+                    return `
+                        <div class="flex items-start justify-between gap-3 p-3 rounded-xl bg-slate-950 border ${isNg ? 'border-rose-500/30' : 'border-amber-500/30'}">
+                            <div class="flex items-start gap-3">
+                                <span class="font-mono font-bold text-xs px-2.5 py-1 rounded-lg ${isNg ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'} shrink-0">
+                                    ${m.timestamp}
+                                </span>
+                                <div>
+                                    <div class="flex items-center gap-2 text-xs font-bold">
+                                        <span class="${isNg ? 'text-rose-400' : 'text-amber-400'}">${isNg ? '❌ NGカット' : '⭐ 見どころ・OK'}</span>
+                                        <span class="text-slate-500">Page ${m.page} (#${m.lineNumber} ${escapeHtml(m.speakerName)})</span>
+                                    </div>
+                                    <p class="text-xs text-slate-300 mt-1">${escapeHtml(m.text)}</p>
+                                </div>
+                            </div>
+                            <button onclick="removeMarker(${idx})" class="text-slate-500 hover:text-rose-400 text-xs p-1">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>`;
+                }).join('');
+            }
+
+            const allCues = [];
+            state.parsedLines.forEach(line => {
+                const sp = state.speakers.find(s => s.id === line.speakerId) || state.speakers[0];
+                line.cues.forEach(cue => {
+                    allCues.push({
+                        ...cue,
+                        lineNumber: line.lineNumber,
+                        pageNumber: line.pageIndex + 1,
+                        speakerName: sp.name,
+                        lineText: line.cleanText
+                    });
+                });
+            });
+
+            const checkedCount = allCues.filter(c => state.cueCheckStates[c.id]).length;
+            document.getElementById('cue-progress-label').textContent = `完了: ${checkedCount} / ${allCues.length}`;
+
+            if (allCues.length === 0) {
+                cuesContainer.innerHTML = `
+                    <div class="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl text-xs">
+                        台本内に (SE: ...) や [テロップ: ...] などの演出指示がありません。
+                    </div>`;
+            } else {
+                cuesContainer.innerHTML = allCues.map(c => {
+                    const isChecked = !!state.cueCheckStates[c.id];
+                    let badgeClass = 'bg-slate-800 text-slate-300';
+                    if (c.type === 'SE') badgeClass = 'bg-amber-500/20 text-amber-300';
+                    else if (c.type === 'TELOP') badgeClass = 'bg-emerald-500/20 text-emerald-300';
+                    else if (c.type === 'IMAGE') badgeClass = 'bg-sky-500/20 text-sky-300';
+                    else if (c.type === 'CUT') badgeClass = 'bg-purple-500/20 text-purple-300';
+
+                    return `
+                        <label class="flex items-start gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800 cursor-pointer hover:border-slate-700 transition ${isChecked ? 'opacity-50' : ''}">
+                            <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleCueCheck('${c.id}', this.checked)"
+                                class="mt-1 w-4 h-4 accent-emerald-500 rounded cursor-pointer">
+                            <div class="flex-1">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="px-2 py-0.5 rounded text-xs font-bold ${badgeClass}">${escapeHtml(c.text)}</span>
+                                    <span class="text-[11px] text-slate-500">P.${c.pageNumber} / #${c.lineNumber} (${escapeHtml(c.speakerName)})</span>
+                                </div>
+                                <p class="text-xs text-slate-400 mt-1 ${isChecked ? 'line-through' : ''}">「${escapeHtml(c.lineText)}」</p>
+                            </div>
+                        </label>`;
+                }).join('');
+            }
+        }
+
+        function toggleCueCheck(cueId, checked) {
+            state.cueCheckStates[cueId] = checked;
+            renderChecklistView();
+        }
+
+        function removeMarker(idx) {
+            state.markers.splice(idx, 1);
+            updateMarkerBadgeCount();
+            renderChecklistView();
+            renderUltrawideSidePanels();
+        }
+
+        function clearMarkers() {
+            state.markers = [];
+            updateMarkerBadgeCount();
+            renderChecklistView();
+            renderUltrawideSidePanels();
+        }
+
+        function copyExportReport() {
+            let lines = ['=== YouTube撮影・編集用メモ (StudioCue出力) ===\n'];
+            lines.push('【1. 撮影タイムスタンプ記録 (NG / 見どころ)】');
+            if (state.markers.length === 0) {
+                lines.push('（記録なし）');
+            } else {
+                state.markers.forEach(m => {
+                    const label = m.type === 'NG' ? '❌ NG' : '⭐ 見どころ';
+                    lines.push(`${m.timestamp} [${label}] P.${m.page} (#${m.lineNumber} ${m.speakerName}) ${m.text}`);
+                });
+            }
+            lines.push('\n【2. 演出・SE・テロップ チェックリスト】');
+            state.parsedLines.forEach(line => {
+                line.cues.forEach(cue => {
+                    const mark = state.cueCheckStates[cue.id] ? '[x]' : '[ ]';
+                    lines.push(`${mark} P.${line.pageIndex + 1} #${line.lineNumber} (${cue.text}) セリフ: ${line.cleanText}`);
+                });
+            });
+
+            const helper = document.getElementById('clipboard-helper');
+            helper.value = lines.join('\n');
+            helper.select();
+            document.execCommand('copy');
+            showPrompterToast('📋 編集用メモをクリップボードにコピーしました！', 'info');
+        }
+
+        function downloadCsvReport() {
+            const rows = [['種別', 'タイムスタンプ/状態', 'ページ', '行番号', '話者', '演出内容', 'セリフ本文']];
+            state.markers.forEach(m => {
+                rows.push([m.type === 'NG' ? 'NGマーク' : '見どころ', m.timestamp, m.page, m.lineNumber, m.speakerName, '', m.text]);
+            });
+            state.parsedLines.forEach(line => {
+                const sp = state.speakers.find(s => s.id === line.speakerId) || state.speakers[0];
+                line.cues.forEach(cue => {
+                    const done = state.cueCheckStates[cue.id] ? '完了' : '未完了';
+                    rows.push(['演出ToDo', done, line.pageIndex + 1, line.lineNumber, sp.name, cue.text, line.cleanText]);
+                });
+            });
+
+            const csvContent = '\uFEFF' + rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `youtube_edit_memo_${new Date().toISOString().slice(0, 10)}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+    </script>
+</body>
+</html>
